@@ -1,0 +1,6 @@
+@pdf_ocr_api_HostAddress = http://localhost:5259
+
+GET {{pdf_ocr_api_HostAddress}}/
+Accept: application/json
+
+###
