@@ -100,6 +100,11 @@ namespace pdf_ocr.Controllers
         /// </summary>
         [HttpPost("demo")]
         [AllowAnonymous]
+        [Consumes("multipart/form-data")]
+        [ProducesResponseType(typeof(ProcessResponse), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status500InternalServerError)]
+        [RequestSizeLimit(10_000_000)]
         public async Task<IActionResult> ProcessDemo([FromForm] PdfUploadRequest request)
         {
             var file = request.File;
@@ -114,14 +119,15 @@ namespace pdf_ocr.Controllers
             // Processar normalmente
             var jobId = await _jobService.CreateJobAsync(file);
 
-            return Ok(new
+            return Ok(new ProcessResponse
             {
-                jobId,
-                status = "queued",
-                message = "Demo - Processamento iniciado",
-                statusUrl = $"/api/jobs/{jobId}/status",
-                isDemo = true,
-                upgradeMessage = "Crie uma conta para mais recursos"
+                JobId = jobId,
+                Status = "queued",
+                Message = "Demo - Processamento iniciado",
+                StatusUrl = $"/api/jobs/{jobId}/status",
+                DownloadUrl = $"/api/jobs/{jobId}/download",
+                CreditsRemaining = 0,
+                UpgradeMessage = "Crie uma conta para mais recursos"
             });
         }
 

@@ -9,22 +9,49 @@ using System.Reflection;
 using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
-// Configuração CORS para permitir frontend
+
+// CORS Configuration - Allow both local dev and production frontend URLs
 builder.Services.AddCors(options =>
 {
+    var isDevelopment = builder.Environment.IsDevelopment();
+    
+    options.AddPolicy("AllowFrontend", policy =>
+    {
+        if (isDevelopment)
+        {
+            // Local development - allow localhost on any port
+            policy
+                .WithOrigins("http://localhost:54336", "http://localhost:5173", "http://127.0.0.1:54336")
+                .AllowAnyMethod()
+                .AllowAnyHeader()
+                .AllowCredentials();
+        }
+        else
+        {
+            // Production - allow Render frontend URL
+            policy
+                .WithOrigins("https://pdf-ocr-frontend.onrender.com")
+                .AllowAnyMethod()
+                .AllowAnyHeader()
+                .AllowCredentials();
+        }
+    });
+    
+    // Legacy AllowAll policy (deprecated, use AllowFrontend instead)
     options.AddDefaultPolicy(policy =>
     {
         policy.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader();
     });
 });
-// Adicionar serviços customizados
+
+// Add custom services
 builder.Services.AddSingleton<IJobService, JobService>();
 // Add services to the container.
 
 builder.Services.AddControllers();
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
-// Configuração Swagger/OpenAPI
+// Configuraï¿½ï¿½o Swagger/OpenAPI
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
 {
@@ -32,9 +59,9 @@ builder.Services.AddSwaggerGen(options =>
     {
         Title = "PDF OCR API",
         Version = "v1.0",
-        Description = "SaaS de OCR para PDFs com preservação de formulários"
+        Description = "SaaS de OCR para PDFs com preservaï¿½ï¿½o de formulï¿½rios"
     });
-    // Adicionar autenticação JWT no Swagger
+    // Adicionar autenticaï¿½ï¿½o JWT no Swagger
     options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
         In = ParameterLocation.Header,
@@ -45,7 +72,7 @@ builder.Services.AddSwaggerGen(options =>
         Type = SecuritySchemeType.Http
     });
 
-    // Incluir comentários XML na documentação
+    // Incluir comentï¿½rios XML na documentaï¿½ï¿½o
     var xmlFile = $"{Assembly.GetExecutingAssembly().GetName().Name}.xml";
     var xmlPath = Path.Combine(AppContext.BaseDirectory, xmlFile);
     if (File.Exists(xmlPath))
@@ -61,14 +88,14 @@ builder.Services.AddSwaggerGen(options =>
 builder.Services.AddHealthChecks();
 
 // ============================================
-// SERVIÇOS CUSTOMIZADOS
+// SERVIï¿½OS CUSTOMIZADOS
 // ============================================
 
 builder.Services.AddSingleton<IJobService, JobService>();
 builder.Services.AddSingleton<IUserService, UserService>();
 builder.Services.AddSupabaseAuth(builder.Configuration);
 
-// Configuração de logging
+// Configuraï¿½ï¿½o de logging
 builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
 builder.Logging.AddDebug();
@@ -77,27 +104,29 @@ builder.Logging.AddDebug();
 var app = builder.Build();
 
 // ========================================
-// CONFIGURAÇÃO DO PIPELINE
+// CONFIGURAï¿½ï¿½O DO PIPELINE
 // ========================================
 
-// Swagger em todos os ambientes (útil para debug em produção)
+// Swagger
 app.UseSwagger();
 app.UseSwaggerUI(options =>
 {
     options.SwaggerEndpoint("/swagger/v1/swagger.json", "PDF OCR API v1");
     options.RoutePrefix = "swagger";
-    options.DocumentTitle = "PDF OCR API - Documentação";
+    options.DocumentTitle = "PDF OCR API - DocumentaÃ§Ã£o";
 });
 
-// CORS
-app.UseCors("AllowAll");
+// CORS - Use AllowFrontend policy for OAuth callback and API requests
+app.UseCors("AllowFrontend");
 
-// IMPORTANTE: Ordem correta
+// Important: Correct order for authentication/authorization middleware
 app.UseAuthentication();
-app.UseAuthorization();
 
-// Roteamento
+// Roteamento (must come before UseAuthorization)
 app.UseRouting();
+
+// Authorization (must come after UseRouting)
+app.UseAuthorization();
 
 // Controllers
 app.MapControllers();
@@ -129,7 +158,7 @@ app.MapGet("/", () => new HealthResponse
 app.MapHealthChecks("/health");
 
 // ============================================
-// LIMPEZA AUTOMÁTICA (Background)
+// LIMPEZA AUTOMï¿½TICA (Background)
 // ============================================
 
 var cleanupTimer = new System.Threading.Timer(async _ =>
@@ -138,7 +167,7 @@ var cleanupTimer = new System.Threading.Timer(async _ =>
     await jobService.CleanupOldJobsAsync(24); // Limpar jobs > 24h
 }, null, TimeSpan.Zero, TimeSpan.FromHours(6));
 
-// Informações da API
+// Informaï¿½ï¿½es da API
 app.MapGet("/api/info", () => new
 {
     service = "PDF OCR API",
@@ -166,10 +195,10 @@ app.MapGet("/api/info", () => new
 .Produces(StatusCodes.Status200OK);
 
 // ========================================
-// INICIALIZAÇÃO
+// INICIALIZAï¿½ï¿½O
 // ========================================
 
-// Log de inicialização
+// Log de inicializaï¿½ï¿½o
 var logger = app.Services.GetRequiredService<ILogger<Program>>();
 logger.LogInformation("=".PadRight(60, '='));
 logger.LogInformation("PDF OCR API - Iniciando");

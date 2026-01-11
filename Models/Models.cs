@@ -50,6 +50,7 @@ namespace pdf_ocr.Models
         public string StatusUrl { get; set; } = string.Empty;
         public string DownloadUrl { get; set; } = string.Empty;
         public int CreditsRemaining { get; set; }
+        public string UpgradeMessage { get; set; }
     }
 
     /// <summary>
