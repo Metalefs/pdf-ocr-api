@@ -5,7 +5,8 @@ namespace pdf_ocr.Models
     {
         public string Id { get; set; }
         public string Name { get; set; }
-        public int Price { get; set; }
+        public float Price { get; set; }
+        public string PriceId { get; set; }
         public int Credits { get; set; }
         public string[] Features { get; set; }
     }
