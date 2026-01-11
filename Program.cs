@@ -1,8 +1,12 @@
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
+using pdf_ocr.Middleware;
 using pdf_ocr.Models;
 using pdf_ocr.Services;
 using Swashbuckle.AspNetCore.SwaggerGen;
 using System.Reflection;
+using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
 // Configuração CORS para permitir frontend
@@ -28,17 +32,17 @@ builder.Services.AddSwaggerGen(options =>
     {
         Title = "PDF OCR API",
         Version = "v1.0",
-        Description = "API REST para processamento de PDFs com OCR preservando formulários",
-        Contact = new OpenApiContact
-        {
-            Name = "Suporte",
-            Email = "contato@exemplo.com"
-        },
-        License = new OpenApiLicense
-        {
-            Name = "MIT License",
-            Url = new Uri("https://opensource.org/licenses/MIT")
-        }
+        Description = "SaaS de OCR para PDFs com preservação de formulários"
+    });
+    // Adicionar autenticação JWT no Swagger
+    options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    {
+        In = ParameterLocation.Header,
+        Description = "JWT Authorization header using Bearer scheme",
+        Name = "Authorization",
+        Scheme = "bearer",
+        BearerFormat = "JWT",
+        Type = SecuritySchemeType.Http
     });
 
     // Incluir comentários XML na documentação
@@ -56,10 +60,19 @@ builder.Services.AddSwaggerGen(options =>
 // Health Checks
 builder.Services.AddHealthChecks();
 
+// ============================================
+// SERVIÇOS CUSTOMIZADOS
+// ============================================
+
+builder.Services.AddSingleton<IJobService, JobService>();
+builder.Services.AddSingleton<IUserService, UserService>();
+builder.Services.AddSupabaseAuth(builder.Configuration);
+
 // Configuração de logging
 builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
 builder.Logging.AddDebug();
+
 
 var app = builder.Build();
 
@@ -77,7 +90,11 @@ app.UseSwaggerUI(options =>
 });
 
 // CORS
-app.UseCors();
+app.UseCors("AllowAll");
+
+// IMPORTANTE: Ordem correta
+app.UseAuthentication();
+app.UseAuthorization();
 
 // Roteamento
 app.UseRouting();
@@ -96,10 +113,12 @@ app.MapGet("/", () => new HealthResponse
     Service = "PDF OCR API",
     Version = "1.0.0",
     Timestamp = DateTime.UtcNow,
-    Dependencies = new Dictionary<string, string>
+    Features = new List<string>
     {
-        { ".NET", Environment.Version.ToString() },
-        { "OS", Environment.OSVersion.ToString() }
+        "OAuth Authentication (Supabase)",
+        "Credit System",
+        "Stripe Payments",
+        "Rate Limiting"
     }
 })
 .WithName("HealthCheck")
@@ -108,6 +127,16 @@ app.MapGet("/", () => new HealthResponse
 
 // Health Check detalhado
 app.MapHealthChecks("/health");
+
+// ============================================
+// LIMPEZA AUTOMÁTICA (Background)
+// ============================================
+
+var cleanupTimer = new System.Threading.Timer(async _ =>
+{
+    var jobService = app.Services.GetRequiredService<IJobService>();
+    await jobService.CleanupOldJobsAsync(24); // Limpar jobs > 24h
+}, null, TimeSpan.Zero, TimeSpan.FromHours(6));
 
 // Informações da API
 app.MapGet("/api/info", () => new

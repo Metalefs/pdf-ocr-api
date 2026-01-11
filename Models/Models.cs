@@ -49,6 +49,7 @@ namespace pdf_ocr.Models
         public string Message { get; set; } = string.Empty;
         public string StatusUrl { get; set; } = string.Empty;
         public string DownloadUrl { get; set; } = string.Empty;
+        public int CreditsRemaining { get; set; }
     }
 
     /// <summary>
@@ -150,7 +151,7 @@ namespace pdf_ocr.Models
         public string Service { get; set; } = "PDF OCR API";
         public string Version { get; set; } = "1.0.0";
         public DateTime Timestamp { get; set; } = DateTime.UtcNow;
-        public Dictionary<string, string> Dependencies { get; set; } = new();
+        public List<string> Features { get; set; } = new();
     }
 
     // ========================================

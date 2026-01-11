@@ -1,6 +1,8 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using pdf_ocr.Models;
 using pdf_ocr.Services;
+using System.Security.Claims;
 
 namespace pdf_ocr.Controllers
 {
@@ -13,101 +15,17 @@ namespace pdf_ocr.Controllers
     public class PdfController : ControllerBase
     {
         private readonly IJobService _jobService;
+        private readonly IUserService _userService;
         private readonly ILogger<PdfController> _logger;
 
-        public PdfController(IJobService jobService, ILogger<PdfController> logger)
+        public PdfController(
+            IJobService jobService,
+            IUserService userService,
+            ILogger<PdfController> logger)
         {
             _jobService = jobService;
+            _userService = userService;
             _logger = logger;
-        }
-
-        /// <summary>
-        /// Processa um PDF de forma síncrona e retorna o arquivo processado imediatamente
-        /// </summary>
-        /// <param name="file">Arquivo PDF para processar</param>
-        /// <returns>PDF processado com OCR</returns>
-        /// <response code="200">PDF processado com sucesso</response>
-        /// <response code="400">Arquivo inválido ou muito grande</response>
-        /// <response code="500">Erro no processamento</response>
-        [HttpPost("process-sync")]
-        [Consumes("multipart/form-data")]
-        [ProducesResponseType(typeof(FileResult), StatusCodes.Status200OK)]
-        [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status400BadRequest)]
-        [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status500InternalServerError)]
-        [RequestSizeLimit(10_000_000)]
-        public async Task<IActionResult> ProcessSync(
-     [FromForm] PdfUploadRequest request)
-        {
-            _logger.LogInformation("Recebida requisição síncrona de processamento");
-
-            // Validações
-            var validationError = ValidateFile(request.File);
-            if (validationError != null)
-            {
-                return validationError;
-            }
-
-            try
-            {
-                // Criar diretório temporário
-                string jobDir = Path.Combine(Path.GetTempPath(), "ocr_sync", Guid.NewGuid().ToString("N"));
-                Directory.CreateDirectory(jobDir);
-
-                string inputPath = Path.Combine(jobDir, "input.pdf");
-
-                _logger.LogInformation("Salvando arquivo: {FileName} ({Size} bytes)",
-                    request.File.FileName, request.File.Length);
-
-                // Salvar arquivo
-                using (var stream = System.IO.File.Create(inputPath))
-                {
-                    await request.File.CopyToAsync(stream);
-                }
-
-                // Processar imediatamente
-                _logger.LogInformation("Iniciando processamento síncrono");
-                var result = await Task.Run(() => OcrPipelineService.Run(jobDir));
-
-                if (!result.Success)
-                {
-                    _logger.LogError("Falha no processamento: {Error}", result.Error);
-
-                    // Limpar diretório temporário
-                    CleanupDirectory(jobDir);
-
-                    return StatusCode(500, new ErrorResponse
-                    {
-                        Error = "Erro no processamento OCR",
-                        Details = result.Error,
-                        Logs = result.Logs
-                    });
-                }
-
-                // Ler arquivo processado
-                var processedBytes = await System.IO.File.ReadAllBytesAsync(result.OutputPdf);
-
-                _logger.LogInformation("Processamento concluído com sucesso. Arquivo: {Size} bytes",
-                    processedBytes.Length);
-
-                // Limpar diretório temporário
-                CleanupDirectory(jobDir);
-
-                // Retornar PDF processado
-                return File(
-                    processedBytes,
-                    "application/pdf",
-                    $"ocr_{request.File.FileName}"
-                );
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Erro crítico no processamento síncrono");
-                return StatusCode(500, new ErrorResponse
-                {
-                    Error = "Erro interno no servidor",
-                    Details = ex.Message
-                });
-            }
         }
 
         /// <summary>
@@ -128,6 +46,14 @@ namespace pdf_ocr.Controllers
     [FromForm] PdfUploadRequest request)
         {
             _logger.LogInformation("Recebida requisição assíncrona de processamento");
+            var file = request.File;
+            // Verificar créditos ANTES de processar
+            var creditCheck = await CreditCheckAttribute.CheckCredits(
+                HttpContext, _userService, _logger);
+
+            if (creditCheck != null)
+                return creditCheck; // Sem créditos
+
 
             // Validações
             var validationError = ValidateFile(request.File);
@@ -139,9 +65,12 @@ namespace pdf_ocr.Controllers
             try
             {
                 // Criar job
-                var jobId = await _jobService.CreateJobAsync(request.File);
+                var userId = GetUserId();
+                var jobId = await _jobService.CreateJobAsync(file);
 
-                _logger.LogInformation("Job criado com sucesso: {JobId}", jobId);
+                _logger.LogInformation(
+                    "Job criado: {JobId} por usuário {UserId}, arquivo {FileName}",
+                    jobId, userId, file.FileName);
 
                 return Ok(new ProcessResponse
                 {
@@ -149,18 +78,57 @@ namespace pdf_ocr.Controllers
                     Status = "queued",
                     Message = "PDF recebido e aguardando processamento",
                     StatusUrl = $"/api/jobs/{jobId}/status",
-                    DownloadUrl = $"/api/jobs/{jobId}/download"
+                    DownloadUrl = $"/api/jobs/{jobId}/download",
+                    CreditsRemaining = await _userService.GetCreditsAsync(userId)
                 });
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Erro ao criar job assíncrono");
+                // Devolver crédito em caso de erro
+                await _userService.AddCreditsAsync(GetUserId(), 1);
                 return StatusCode(500, new ErrorResponse
                 {
                     Error = "Erro ao criar job de processamento",
                     Details = ex.Message
                 });
             }
+        }
+
+        /// <summary>
+        /// DEMO: Processar sem autenticação (limitado)
+        /// </summary>
+        [HttpPost("demo")]
+        [AllowAnonymous]
+        public async Task<IActionResult> ProcessDemo([FromForm] PdfUploadRequest request)
+        {
+            var file = request.File;
+            // Limites para demo
+            if (file.Length > 1_000_000) // 1MB
+                return BadRequest(new
+                {
+                    error = "Demo limitado a 1MB",
+                    message = "Crie uma conta gratuita para processar PDFs maiores"
+                });
+
+            // Processar normalmente
+            var jobId = await _jobService.CreateJobAsync(file);
+
+            return Ok(new
+            {
+                jobId,
+                status = "queued",
+                message = "Demo - Processamento iniciado",
+                statusUrl = $"/api/jobs/{jobId}/status",
+                isDemo = true,
+                upgradeMessage = "Crie uma conta para mais recursos"
+            });
+        }
+
+        private string GetUserId()
+        {
+            return User.FindFirst(ClaimTypes.NameIdentifier)?.Value
+                ?? throw new UnauthorizedAccessException();
         }
 
         /// <summary>
