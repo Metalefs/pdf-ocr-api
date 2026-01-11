@@ -36,16 +36,29 @@ FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble AS final
 WORKDIR /app
 
 # ===================================================================
-# Instalar apenas dependências necessárias
+# Instalar dependências necessárias + PDFium
 # ===================================================================
 RUN apt-get update && apt-get install -y \
     # Bibliotecas para System.Drawing (necessário para PDFiumSharp)
     libgdiplus \
+    # Dependências do PDFium
+    wget \
+    unzip \
     # Utilitários
     curl \
     # Limpar cache
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
+# ===================================================================
+# Baixar e instalar binários nativos do PDFium
+# ===================================================================
+RUN mkdir -p /app/runtimes/linux-x64/native && \
+    cd /tmp && \
+    wget https://github.com/bblanchon/pdfium-binaries/releases/latest/download/pdfium-linux-x64.tgz && \
+    tar -xzf pdfium-linux-x64.tgz && \
+    cp lib/libpdfium.so /app/runtimes/linux-x64/native/libpdfium.so && \
+    rm -rf /tmp/*
 
 # ===================================================================
 # Criar diretórios de trabalho
