@@ -4,7 +4,7 @@ namespace pdf_ocr.Services
 {
     public interface IUserService
     {
-        Task<UserProfile?> GetOrCreateUserAsync(string userId, string email, string name, string? avatar);
+        Task<UserProfile?> GetOrCreateUserAsync(string userId, string email, string name, string? avatar, string? user_metadata = null);
         Task<int> GetCreditsAsync(string userId);
         Task<bool> DeductCreditsAsync(string userId, int amount);
         Task<bool> AddCreditsAsync(string userId, int amount);
@@ -21,7 +21,7 @@ namespace pdf_ocr.Services
             _logger = logger;
         }
 
-        public Task<UserProfile?> GetOrCreateUserAsync(string userId, string email, string name, string? avatar)
+        public Task<UserProfile?> GetOrCreateUserAsync(string userId, string email, string name, string? avatar, string? user_metadata)
         {
             if (!_users.ContainsKey(userId))
             {
@@ -30,8 +30,9 @@ namespace pdf_ocr.Services
                     Id = userId,
                     Email = email,
                     Name = name,
+                    User_metadata = user_metadata,
                     Avatar = avatar,
-                    Credits = 10, // 10 créditos grátis
+                    Credits = 2, // 2 créditos grátis
                     Plan = "free",
                     CreatedAt = DateTime.UtcNow
                 };

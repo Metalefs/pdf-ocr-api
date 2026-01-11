@@ -79,7 +79,7 @@ namespace pdf_ocr.Controllers
 
         private async Task<string> GetUserPlan(string userId)
         {
-            var user = await _userService.GetOrCreateUserAsync(userId, "", "", null);
+            var user = await _userService.GetOrCreateUserAsync(userId, "", "", null, null);
             return user?.Plan ?? "free";
         }
 

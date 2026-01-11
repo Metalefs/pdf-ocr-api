@@ -1,9 +1,12 @@
+using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
 using pdf_ocr.Middleware;
 using pdf_ocr.Models;
 using pdf_ocr.Services;
+using Stripe;
 using Swashbuckle.AspNetCore.SwaggerGen;
 using System.Reflection;
 using System.Text;
@@ -61,7 +64,7 @@ builder.Services.AddSwaggerGen(options =>
         Version = "v1.0",
         Description = "SaaS de OCR para PDFs com preserva��o de formul�rios"
     });
-    // Adicionar autentica��o JWT no Swagger
+    // Adicionar autenticação JWT no Swagger
     options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
         In = ParameterLocation.Header,
@@ -75,7 +78,7 @@ builder.Services.AddSwaggerGen(options =>
     // Incluir coment�rios XML na documenta��o
     var xmlFile = $"{Assembly.GetExecutingAssembly().GetName().Name}.xml";
     var xmlPath = Path.Combine(AppContext.BaseDirectory, xmlFile);
-    if (File.Exists(xmlPath))
+    if (System.IO.File.Exists(xmlPath))
     {
         options.IncludeXmlComments(xmlPath);
     }
@@ -88,14 +91,62 @@ builder.Services.AddSwaggerGen(options =>
 builder.Services.AddHealthChecks();
 
 // ============================================
-// SERVI�OS CUSTOMIZADOS
+// SERVIÇOS CUSTOMIZADOS
 // ============================================
 
 builder.Services.AddSingleton<IJobService, JobService>();
 builder.Services.AddSingleton<IUserService, UserService>();
-builder.Services.AddSupabaseAuth(builder.Configuration);
+//builder.Services.AddSupabaseAuth(builder.Configuration);
+// Configure authentication with JWT Bearer using Supabase OpenID Connect metadata
+var supabaseUrl = builder.Configuration["Supabase:Url"]?.TrimEnd('/');
+var isDevelopment = builder.Environment.IsDevelopment();
 
-// Configura��o de logging
+if (!string.IsNullOrEmpty(supabaseUrl))
+{
+    var authority = supabaseUrl + "/auth/v1";
+
+    builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+        .AddJwtBearer(options =>
+        {
+            options.RequireHttpsMetadata = !isDevelopment;
+            options.Authority = authority;
+            // Accept tokens intended for this API or skip audience validation
+            options.TokenValidationParameters = new TokenValidationParameters
+            {
+                ValidateIssuer = true,
+                ValidIssuer = authority,
+                ValidateAudience = false,
+                ValidateIssuerSigningKey = true
+            };
+            // Allow the handler to retrieve signing keys from the discovery endpoint
+            options.MetadataAddress = authority + "/.well-known/openid-configuration";
+        });
+
+    builder.Services.AddAuthorization();
+}
+else
+{
+    // Fallback: basic JWT auth with symmetric key if Supabase URL not configured
+    builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+        .AddJwtBearer(options =>
+        {
+            var jwtSecret = builder.Configuration["Supabase:JwtSecret"] ?? string.Empty;
+            options.RequireHttpsMetadata = !isDevelopment;
+            options.SaveToken = true;
+            options.TokenValidationParameters = new TokenValidationParameters
+            {
+                ValidateIssuer = false,
+                ValidateAudience = false,
+                ValidateIssuerSigningKey = !string.IsNullOrEmpty(jwtSecret),
+                IssuerSigningKey = string.IsNullOrEmpty(jwtSecret)
+                    ? null
+                    : new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret))
+            };
+        });
+
+    builder.Services.AddAuthorization();
+}
+// Configuração de logging
 builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
 builder.Logging.AddDebug();
@@ -119,13 +170,10 @@ app.UseSwaggerUI(options =>
 // CORS - Use AllowFrontend policy for OAuth callback and API requests
 app.UseCors("AllowFrontend");
 
-// Important: Correct order for authentication/authorization middleware
-app.UseAuthentication();
-
-// Roteamento (must come before UseAuthorization)
+// Important: Correct order for routing/authentication/authorization middleware
 app.UseRouting();
 
-// Authorization (must come after UseRouting)
+app.UseAuthentication();
 app.UseAuthorization();
 
 // Controllers
