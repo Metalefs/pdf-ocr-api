@@ -1,64 +1,95 @@
 # ===================================================================
-# Dockerfile Otimizado para Windows Server
-# Usa instalação manual do Tesseract para imagem mais leve
+# Dockerfile Otimizado para Produção - PDF OCR API SaaS
+# Multi-stage build para imagem menor e mais rápida
 # ===================================================================
 
 # ===================================================================
-# Estágio BASE: Runtime com Tesseract pré-instalado
+# STAGE 1: Build
 # ===================================================================
-FROM mcr.microsoft.com/dotnet/aspnet:8.0-windowsservercore-ltsc2022 AS base
-WORKDIR /app
-EXPOSE 8080
-
-SHELL ["powershell", "-Command", "$ErrorActionPreference = 'Stop';"]
-
-
-# Criar diretórios de trabalho
-RUN New-Item -ItemType Directory -Force -Path C:\temp\ocr_jobs | Out-Null
-
-# ===================================================================
-# Estágio BUILD: Compilação
-# ===================================================================
-FROM mcr.microsoft.com/dotnet/sdk:8.0-windowsservercore-ltsc2022 AS build
+FROM mcr.microsoft.com/dotnet/sdk:10.0-noble AS build
 WORKDIR /src
 
-# Restaurar dependências (cache layer)
+# Copiar apenas arquivos de projeto primeiro (melhor cache)
 COPY ["pdf-ocr-api.csproj", "./"]
-RUN dotnet restore "pdf-ocr-api-api.csproj"
+RUN dotnet restore "pdf-ocr-api.csproj"
 
-# Copiar código e compilar
+# Copiar código fonte
 COPY . .
+
+# Build em Release
 RUN dotnet build "pdf-ocr-api.csproj" -c Release -o /app/build
 
 # ===================================================================
-# Estágio PUBLISH: Publicação
+# STAGE 2: Publish
 # ===================================================================
 FROM build AS publish
-RUN dotnet publish "pdf-ocr-api.csproj" -c Release -o /app/publish /p:UseAppHost=false
+RUN dotnet publish "pdf-ocr-api.csproj" \
+    -c Release \
+    -o /app/publish \
+    /p:UseAppHost=false \
+    --no-restore
 
 # ===================================================================
-# Estágio FINAL: Produção
+# STAGE 3: Runtime (Final)
 # ===================================================================
-FROM base AS final
+FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble AS final
 WORKDIR /app
 
-# Copiar binários publicados
+# ===================================================================
+# Instalar apenas dependências necessárias
+# ===================================================================
+RUN apt-get update && apt-get install -y \
+    # Bibliotecas para System.Drawing (necessário para PDFiumSharp)
+    libgdiplus \
+    # Utilitários
+    curl \
+    # Limpar cache
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# ===================================================================
+# Criar diretórios de trabalho
+# ===================================================================
+RUN mkdir -p /tmp/ocr_jobs && \
+    chmod 777 /tmp/ocr_jobs
+
+# ===================================================================
+# Copiar aplicação publicada
+# ===================================================================
 COPY --from=publish /app/publish .
 
+# Nota: tessdata já vem incluído no pacote NuGet Tesseract
+
+# ===================================================================
 # Variáveis de ambiente
+# ===================================================================
 ENV ASPNETCORE_URLS=http://+:8080 \
     ASPNETCORE_ENVIRONMENT=Production \
     DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false \
-    TMP=C:\temp \
-    TEMP=C:\temp
+    TMP=/tmp \
+    TEMP=/tmp
 
+# ===================================================================
+# Criar usuário não-root (segurança)
+# ===================================================================
+RUN groupadd -r appuser && \
+    useradd -r -g appuser appuser && \
+    chown -R appuser:appuser /app /tmp/ocr_jobs
+
+USER appuser
+
+# ===================================================================
+# Expor porta
+# ===================================================================
+EXPOSE 8080
+
+# ===================================================================
 # Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-    CMD powershell -NoProfile -Command \
-        "try { \
-            $res = Invoke-WebRequest -Uri http://localhost:8080/ -UseBasicParsing -TimeoutSec 5; \
-            exit ($res.StatusCode -eq 200 ? 0 : 1); \
-        } catch { exit 1; }"
+# ===================================================================
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD curl -f http://localhost:8080/ || exit 1
 
-# Ponto de entrada
+# ===================================================================
+# Iniciar aplicação
+# ===================================================================
 ENTRYPOINT ["dotnet", "pdf-ocr-api.dll"]
