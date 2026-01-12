@@ -20,35 +20,32 @@ RUN dotnet publish "pdf-ocr-api.csproj" \
 FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble AS final
 WORKDIR /app
 
+# Instalação de dependências nativas e fontes
+# Aceitar automaticamente a licença da Microsoft para fontes core
+RUN echo "ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula select true" | debconf-set-selections
+
 # Instalação de dependências nativas vitais
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    # Essencial para SkiaSharp e renderização de texto
-    libfontconfig1 \
-    libfreetype6 \
-    libicu-dev \
-    libharfbuzz0b \
-    # Essencial para System.Drawing.Common (Legacy)
-    libgdiplus \
-    # Tesseract OCR
-    tesseract-ocr \
-    tesseract-ocr-por \
-    # Ferramentas de suporte
-    curl \
-    ca-certificates \
-    wget \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+    libfontconfig1 libfreetype6 libicu-dev libharfbuzz0b libgdiplus \
+    # Tesseract e Dicionários
+    tesseract-ocr tesseract-ocr-por tesseract-ocr-eng tesseract-ocr-ara \
+    tesseract-ocr-chi-sim tesseract-ocr-jpn tesseract-ocr-kor tesseract-ocr-osd \
+    # Fontes e Utilidades
+    ttf-mscorefonts-installer fonts-liberation fontconfig \
+    curl wget ca-certificates \
+    && fc-cache -f -v \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # ===================================================================
-# Injeção Robusta do PDFium (Ajustado para Dtronix/PDFiumCore)
+# Injeção Robusta do PDFium (Ajustado para Linux)
 # ===================================================================
-# Baixa o binário nativo e coloca tanto no caminho de runtime quanto na raiz
+# IMPORTANTE: Criamos links simbólicos pois alguns wrappers procuram 'pdfium' sem o prefixo 'lib'
 RUN mkdir -p /app/runtimes/linux-x64/native && \
     wget -q https://github.com/bblanchon/pdfium-binaries/releases/latest/download/pdfium-linux-x64.tgz && \
     tar -xzf pdfium-linux-x64.tgz && \
     cp lib/libpdfium.so /app/runtimes/linux-x64/native/libpdfium.so && \
-    cp lib/libpdfium.so /app/libpdfium.so && \
-    chmod +x /app/libpdfium.so && \
+    ln -s /app/runtimes/linux-x64/native/libpdfium.so /app/runtimes/linux-x64/native/pdfium.so && \
+    ln -s /app/runtimes/linux-x64/native/libpdfium.so /app/libpdfium.so && \
     rm -rf pdfium-linux-x64.tgz lib
 
 # ===================================================================
@@ -58,18 +55,21 @@ RUN mkdir -p /tmp/ocr_jobs && chmod 777 /tmp/ocr_jobs
 
 COPY --from=build /app/publish .
 
-# Variáveis de ambiente corrigidas
+# ===================================================================
+# Variáveis de Ambiente Corrigidas
+# ===================================================================
 ENV ASPNETCORE_URLS=http://+:8080 \
-    # Garante que o Tesseract e o .NET achem as bibliotecas
     LD_LIBRARY_PATH="/app:/app/runtimes/linux-x64/native:${LD_LIBRARY_PATH}" \
-    # Desativa o modo invariante para o Tesseract funcionar com caracteres especiais (acentos)
     DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false \
-    TESSDATA_PREFIX=/usr/share/tesseract-ocr/5/tessdata/
+    TESSDATA_PREFIX=/usr/share/tesseract-ocr/5/tessdata/ \
+    LC_ALL=C.UTF-8 \
+    LANG=C.UTF-8
 
 # Criação de usuário não-root com permissões explícitas
 RUN groupadd -r appuser && useradd -r -g appuser appuser && \
     chown -R appuser:appuser /app /tmp/ocr_jobs
 
+RUN chmod -R 755 /usr/share/tesseract-ocr/
 USER appuser
 EXPOSE 8080
 

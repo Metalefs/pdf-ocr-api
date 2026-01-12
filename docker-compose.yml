@@ -4,7 +4,7 @@
 version: '3.8'
 
 services:
-  api:
+  pdf-ocr-api:
     build: .
     ports:
       - "5000:8080"
@@ -12,7 +12,7 @@ services:
       - ASPNETCORE_ENVIRONMENT=Development
       - ASPNETCORE_URLS=http://+:8080
     volumes:
-      - ./temp:/tmp/ocr_jobs
+      - ./debug_output:/tmp/ocr_jobs
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/"]

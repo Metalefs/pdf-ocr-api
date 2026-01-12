@@ -54,6 +54,34 @@ namespace pdf_ocr.Services
         public string? StripeCustomerId { get; set; }
     }
 
+    [Table("usage_history")]
+    public class SupabaseUsageHistoryRecord : BaseModel
+    {
+        [PrimaryKey("id", true)]
+        [JsonPropertyName("id")]
+        public long Id { get; set; }
+
+        [Column("user_id")]
+        [JsonPropertyName("user_id")]
+        public string UserId { get; set; } = string.Empty;
+
+        [Column("credits_used")]
+        [JsonPropertyName("credits_used")]
+        public int CreditsUsed { get; set; }
+
+        [Column("file_name")]
+        [JsonPropertyName("file_name")]
+        public string? FileName { get; set; }
+
+        [Column("file_size")]
+        [JsonPropertyName("file_size")]
+        public long? FileSize { get; set; }
+
+        [Column("created_at")]
+        [JsonPropertyName("created_at")]
+        public DateTime CreatedAt { get; set; }
+    }
+
     // ========================================
     // SERVIÇO COM SUPABASE
     // ========================================
@@ -163,11 +191,20 @@ namespace pdf_ocr.Services
                 await _supabase
                     .From<UserRecord>()
                     .Update(user);
-
                 _logger.LogInformation(
                     "Créditos deduzidos: {UserId} -{Amount} = {Remaining}",
                     userId, amount, user.Credits
                 );
+
+                // Registrar no histórico de uso
+                try
+                {
+                    await RecordUsageAsync(userId, amount, null, null);
+                }
+                catch (Exception rex)
+                {
+                    _logger.LogWarning(rex, "Falha ao registrar usage_history (não irá reverter dedução): {UserId}", userId);
+                }
 
                 return true;
             }
@@ -236,6 +273,52 @@ namespace pdf_ocr.Services
             {
                 _logger.LogError(ex, "Erro ao atualizar plano: {UserId}", userId);
                 return false;
+            }
+        }
+
+        public async Task<bool> RecordUsageAsync(string userId, int creditsUsed, string? fileName, long? fileSize)
+        {
+            try
+            {
+                var record = new SupabaseUsageHistoryRecord
+                {
+                    UserId = userId,
+                    CreditsUsed = creditsUsed,
+                    FileName = fileName,
+                    FileSize = fileSize,
+                    CreatedAt = DateTime.UtcNow
+                };
+                await _supabase.From<SupabaseUsageHistoryRecord>().Insert(record);
+                _logger.LogInformation("Inserted usage history: {UserId} {Credits}", userId, creditsUsed);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erro ao inserir usage_history: {UserId}", userId);
+                return false;
+            }
+        }
+
+        public async Task<UsageStats?> GetUsageStatsAsync(string userId)
+        {
+            try
+            {
+                // A RPC retorna um array com uma linha. Desserializar como array e pegar o primeiro elemento.
+                var resp = await _supabase.Rpc<UsageStats[]>("get_user_usage_stats", new { p_user_id = userId });
+
+                if (resp == null)
+                    return null;
+
+                // A RPC retorna um array com uma linha; resp é UsageStats[]
+                if (resp.Length > 0)
+                    return resp[0];
+
+                return null;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erro ao obter estatísticas de uso: {UserId}", userId);
+                return null;
             }
         }
 

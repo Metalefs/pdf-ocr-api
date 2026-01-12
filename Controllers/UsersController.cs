@@ -114,8 +114,20 @@ namespace pdf_ocr.Controllers
                 var userId = GetUserId();
                 var plan = await GetUserPlan(userId);
 
-                // TODO: Implementar consulta real no Supabase (função get_user_usage_stats)
-                // Por enquanto, retornar valores fictícios
+                var usageStats = await _userService.GetUsageStatsAsync(userId);
+
+                if (usageStats != null)
+                {
+                    return Ok(new
+                    {
+                        today = usageStats.Today,
+                        week = usageStats.Week,
+                        month = usageStats.Month,
+                        limit = usageStats.LimitValue
+                    });
+                }
+
+                // Fallback caso a consulta falhe
                 return Ok(new
                 {
                     today = 0,

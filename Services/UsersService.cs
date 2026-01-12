@@ -1,4 +1,5 @@
 ﻿using pdf_ocr.Models;
+using System.Text.Json.Serialization;
 
 namespace pdf_ocr.Services
 {
@@ -9,12 +10,15 @@ namespace pdf_ocr.Services
         Task<bool> DeductCreditsAsync(string userId, int amount);
         Task<bool> AddCreditsAsync(string userId, int amount);
         Task<bool> UpdatePlanAsync(string userId, string plan, DateTime? expiresAt);
+        Task<UsageStats?> GetUsageStatsAsync(string userId);
+        Task<bool> RecordUsageAsync(string userId, int creditsUsed, string? fileName, long? fileSize);
     }
 
     public class UserService : IUserService
     {
         private readonly Dictionary<string, UserProfile> _users = new();
         private readonly ILogger<UserService> _logger;
+        private readonly Dictionary<string, List<UsageHistoryRecord>> _usageHistory = new();
 
         public UserService(ILogger<UserService> logger)
         {
@@ -48,18 +52,22 @@ namespace pdf_ocr.Services
             return Task.FromResult(0);
         }
 
-        public Task<bool> DeductCreditsAsync(string userId, int amount)
+        public async Task<bool> DeductCreditsAsync(string userId, int amount)
         {
             if (!_users.TryGetValue(userId, out var user))
-                return Task.FromResult(false);
+                return false;
 
             if (user.Credits < amount)
-                return Task.FromResult(false);
+                return false;
 
             user.Credits -= amount;
             _logger.LogInformation("Créditos deduzidos: {UserId} -{Amount} = {Remaining}",
                 userId, amount, user.Credits);
-            return Task.FromResult(true);
+
+            // Registrar no histórico de uso em memória
+            await RecordUsageAsync(userId, amount, null, null);
+
+            return true;
         }
 
         public Task<bool> AddCreditsAsync(string userId, int amount)
@@ -83,5 +91,68 @@ namespace pdf_ocr.Services
             _logger.LogInformation("Plano atualizado: {UserId} → {Plan}", userId, plan);
             return Task.FromResult(true);
         }
+
+        public Task<UsageStats?> GetUsageStatsAsync(string userId)
+        {
+            if (!_users.TryGetValue(userId, out var user))
+                return Task.FromResult<UsageStats?>(new UsageStats { Today = 0, Week = 0, Month = 0, LimitValue = 3 });
+
+            var limit = user.Plan switch
+            {
+                "free" => 3,
+                "pro" => 50,
+                "business" => 500,
+                _ => 3
+            };
+
+            return Task.FromResult<UsageStats?>(new UsageStats { Today = 0, Week = 0, Month = 0, LimitValue = limit });
+        }
+
+        public Task<bool> RecordUsageAsync(string userId, int creditsUsed, string? fileName, long? fileSize)
+        {
+            var entry = new UsageHistoryRecord
+            {
+                Id = 0,
+                UserId = userId,
+                CreditsUsed = creditsUsed,
+                FileName = fileName,
+                FileSize = fileSize,
+                CreatedAt = DateTime.UtcNow
+            };
+
+            if (!_usageHistory.ContainsKey(userId))
+                _usageHistory[userId] = new List<UsageHistoryRecord>();
+
+            _usageHistory[userId].Add(entry);
+            _logger.LogInformation("Recorded usage in-memory: {UserId} -{Credits}", userId, creditsUsed);
+            return Task.FromResult(true);
+        }
+
+       
+        }
+
+    public class UsageStats
+    {
+        [JsonPropertyName("today")]
+        public int Today { get; set; }
+
+        [JsonPropertyName("week")]
+        public int Week { get; set; }
+
+        [JsonPropertyName("month")]
+        public int Month { get; set; }
+
+        [JsonPropertyName("limit_value")]
+        public int LimitValue { get; set; }
+    }
+
+    public class UsageHistoryRecord
+    {
+        public long Id { get; set; }
+        public string UserId { get; set; } = string.Empty;
+        public int CreditsUsed { get; set; }
+        public string? FileName { get; set; }
+        public long? FileSize { get; set; }
+        public DateTime CreatedAt { get; set; }
     }
 }
