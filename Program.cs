@@ -33,7 +33,7 @@ builder.Services.AddCors(options =>
         {
             // Production - allow Render frontend URL
             policy
-                .WithOrigins("https://pdf-ocr-frontend.onrender.com", "https://pdf-ocr-frontend.netlify.app)
+                .WithOrigins("https://pdf-ocr-frontend.onrender.com", "https://pdf-ocr-frontend.netlify.app")
                 .AllowAnyMethod()
                 .AllowAnyHeader()
                 .AllowCredentials();
