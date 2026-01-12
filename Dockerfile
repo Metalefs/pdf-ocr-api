@@ -39,6 +39,8 @@ WORKDIR /app
 # Instalar dependências necessárias + PDFium
 # ===================================================================
 RUN apt-get update && apt-get install -y \
+libfontconfig1 \
+    libfreetype6 \
     # Dependências do PDFium
     wget \
     unzip \
