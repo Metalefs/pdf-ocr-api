@@ -60,7 +60,7 @@ namespace pdf_ocr.Controllers
                 var email = User.FindFirst(ClaimTypes.Email)?.Value ?? "";
 
                 // Buscar usuário atual
-                var user = await _userService.GetOrCreateUserAsync(userId, email, request.Name, request.Avatar, null);
+                var user = await _userService.UpdateUserAsync(userId, request.Name, request.Avatar);
 
                 if (user == null)
                 {

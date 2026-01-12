@@ -12,6 +12,7 @@ namespace pdf_ocr.Services
         Task<bool> UpdatePlanAsync(string userId, string plan, DateTime? expiresAt);
         Task<UsageStats?> GetUsageStatsAsync(string userId);
         Task<bool> RecordUsageAsync(string userId, int creditsUsed, string? fileName, long? fileSize);
+        Task<Models.UserProfile?> UpdateUserAsync(string userId, string name, string? avatar);
     }
 
     public class UserService : IUserService
@@ -128,8 +129,11 @@ namespace pdf_ocr.Services
             return Task.FromResult(true);
         }
 
-       
+        public Task<Models.UserProfile?> UpdateUserAsync(string userId, string name, string? avatar)
+        {
+            throw new NotImplementedException();
         }
+    }
 
     public class UsageStats
     {

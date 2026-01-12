@@ -1,4 +1,4 @@
-using Microsoft.AspNetCore.Authentication.Cookies;
+﻿using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.IdentityModel.Tokens;
@@ -52,9 +52,11 @@ builder.Services.AddSingleton<IJobService, JobService>();
 // Add services to the container.
 
 builder.Services.AddControllers();
+
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
-// Configura��o Swagger/OpenAPI
+
+// Configuraï¿½ï¿½o Swagger/OpenAPI
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(options =>
 {
@@ -62,9 +64,9 @@ builder.Services.AddSwaggerGen(options =>
     {
         Title = "PDF OCR API",
         Version = "v1.0",
-        Description = "SaaS de OCR para PDFs com preserva��o de formul�rios"
+        Description = "SaaS de OCR para PDFs com preservaï¿½ï¿½o de formulï¿½rios"
     });
-    // Adicionar autenticação JWT no Swagger
+    // Adicionar autenticaÃ§Ã£o JWT no Swagger
     options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
         In = ParameterLocation.Header,
@@ -75,7 +77,7 @@ builder.Services.AddSwaggerGen(options =>
         Type = SecuritySchemeType.Http
     });
 
-    // Incluir coment�rios XML na documenta��o
+    // Incluir comentï¿½rios XML na documentaï¿½ï¿½o
     var xmlFile = $"{Assembly.GetExecutingAssembly().GetName().Name}.xml";
     var xmlPath = Path.Combine(AppContext.BaseDirectory, xmlFile);
     if (System.IO.File.Exists(xmlPath))
@@ -91,13 +93,10 @@ builder.Services.AddSwaggerGen(options =>
 builder.Services.AddHealthChecks();
 
 // ============================================
-// SERVIÇOS CUSTOMIZADOS
+// SERVIÃ‡OS CUSTOMIZADOS
 // ============================================
 
 builder.Services.AddSingleton<IJobService, JobService>();
-// **IMPORTANTE**: Trocar para Supabase em produção
-// Desenvolvimento: UserService (em memória)
-// Produção: SupabaseUserService (banco de dados)
 if (builder.Environment.IsDevelopment())
 {
     //builder.Services.AddSingleton<IUserService, UserService>();
@@ -105,60 +104,49 @@ if (builder.Environment.IsDevelopment())
 }
 else
 {
-    // Produção: usar Supabase
+    // ProduÃ§Ã£o: usar Supabase
     builder.Services.AddSingleton<IUserService, SupabaseUserService>();
 }
-//builder.Services.AddSupabaseAuth(builder.Configuration);
-// Configure authentication with JWT Bearer using Supabase OpenID Connect metadata
+// ============================================
+// AUTENTICAÇÃO: JWT + API Key
+// ============================================
+
+// Registrar serviço de API Keys
+builder.Services.AddSingleton<IApiKeyService, ApiKeyService>();
+
 var supabaseUrl = builder.Configuration["Supabase:Url"]?.TrimEnd('/');
 var isDevelopment = builder.Environment.IsDevelopment();
 
-if (!string.IsNullOrEmpty(supabaseUrl))
-{
-    var authority = supabaseUrl + "/auth/v1";
-
-    builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-        .AddJwtBearer(options =>
+builder.Services
+    .AddAuthentication(options =>
+    {
+        // Esquema padrão: JWT Bearer
+        options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
+        options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
+    })
+    .AddJwtBearer(options =>
+    {
+        var authority = supabaseUrl + "/auth/v1";
+        options.Authority = authority;
+        options.TokenValidationParameters = new TokenValidationParameters
         {
-            options.RequireHttpsMetadata = !isDevelopment;
-            options.Authority = authority;
-            // Accept tokens intended for this API or skip audience validation
-            options.TokenValidationParameters = new TokenValidationParameters
-            {
-                ValidateIssuer = true,
-                ValidIssuer = authority,
-                ValidateAudience = false,
-                ValidateIssuerSigningKey = true
-            };
-            // Allow the handler to retrieve signing keys from the discovery endpoint
-            options.MetadataAddress = authority + "/.well-known/openid-configuration";
-        });
+            ValidateIssuer = true,
+            ValidIssuer = authority,
+            ValidateAudience = false,
+            ValidateIssuerSigningKey = true
+        };
+    })
+    .AddApiKeySupport();
 
-    builder.Services.AddAuthorization();
-}
-else
+// Configurar política que aceita AMBOS os esquemas
+builder.Services.AddAuthorization(options =>
 {
-    // Fallback: basic JWT auth with symmetric key if Supabase URL not configured
-    builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-        .AddJwtBearer(options =>
-        {
-            var jwtSecret = builder.Configuration["Supabase:JwtSecret"] ?? string.Empty;
-            options.RequireHttpsMetadata = !isDevelopment;
-            options.SaveToken = true;
-            options.TokenValidationParameters = new TokenValidationParameters
-            {
-                ValidateIssuer = false,
-                ValidateAudience = false,
-                ValidateIssuerSigningKey = !string.IsNullOrEmpty(jwtSecret),
-                IssuerSigningKey = string.IsNullOrEmpty(jwtSecret)
-                    ? null
-                    : new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret))
-            };
-        });
-
-    builder.Services.AddAuthorization();
-}
-// Configuração de logging
+    options.DefaultPolicy = new AuthorizationPolicyBuilder()
+        .AddAuthenticationSchemes(JwtBearerDefaults.AuthenticationScheme, "ApiKey")
+        .RequireAuthenticatedUser()
+        .Build();
+});
+// ConfiguraÃ§Ã£o de logging
 builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
 builder.Logging.AddDebug();
@@ -167,7 +155,7 @@ builder.Logging.AddDebug();
 var app = builder.Build();
 
 // ========================================
-// CONFIGURA��O DO PIPELINE
+// CONFIGURAï¿½ï¿½O DO PIPELINE
 // ========================================
 
 // Swagger
@@ -185,7 +173,7 @@ app.UseCors("AllowFrontend");
 // Important: Correct order for routing/authentication/authorization middleware
 app.UseRouting();
 
-app.UseAuthentication();
+app.UseAuthentication(); // Tenta JWT primeiro, depois API Key
 app.UseAuthorization();
 
 // Controllers
@@ -218,7 +206,7 @@ app.MapGet("/", () => new HealthResponse
 app.MapHealthChecks("/health");
 
 // ============================================
-// LIMPEZA AUTOM�TICA (Background)
+// LIMPEZA AUTOMï¿½TICA (Background)
 // ============================================
 
 var cleanupTimer = new System.Threading.Timer(async _ =>
@@ -227,7 +215,7 @@ var cleanupTimer = new System.Threading.Timer(async _ =>
     await jobService.CleanupOldJobsAsync(24); // Limpar jobs > 24h
 }, null, TimeSpan.Zero, TimeSpan.FromHours(6));
 
-// Informa��es da API
+// Informaï¿½ï¿½es da API
 app.MapGet("/api/info", () => new
 {
     service = "PDF OCR API",
@@ -255,10 +243,10 @@ app.MapGet("/api/info", () => new
 .Produces(StatusCodes.Status200OK);
 
 // ========================================
-// INICIALIZA��O
+// INICIALIZAï¿½ï¿½O
 // ========================================
 
-// Log de inicializa��o
+// Log de inicializaï¿½ï¿½o
 var logger = app.Services.GetRequiredService<ILogger<Program>>();
 logger.LogInformation("=".PadRight(60, '='));
 logger.LogInformation("PDF OCR API - Iniciando");

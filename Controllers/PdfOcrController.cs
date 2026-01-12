@@ -7,7 +7,7 @@ using System.Security.Claims;
 namespace pdf_ocr.Controllers
 {
     /// <summary>
-    /// Controlador responsável pelo processamento de PDFs com OCR
+    /// Controlador responsï¿½vel pelo processamento de PDFs com OCR
     /// </summary>
     [ApiController]
     [Route("api/[controller]")]
@@ -29,12 +29,12 @@ namespace pdf_ocr.Controllers
         }
 
         /// <summary>
-        /// Inicia o processamento assíncrono de um PDF
+        /// Inicia o processamento assï¿½ncrono de um PDF
         /// </summary>
         /// <param name="file">Arquivo PDF para processar</param>
-        /// <returns>Informações do job criado</returns>
+        /// <returns>Informaï¿½ï¿½es do job criado</returns>
         /// <response code="200">Job criado com sucesso</response>
-        /// <response code="400">Arquivo inválido ou muito grande</response>
+        /// <response code="400">Arquivo invï¿½lido ou muito grande</response>
         /// <response code="500">Erro ao criar job</response>
         [HttpPost("process")]
         [Consumes("multipart/form-data")]
@@ -42,20 +42,21 @@ namespace pdf_ocr.Controllers
         [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status400BadRequest)]
         [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status500InternalServerError)]
         [RequestSizeLimit(10_000_000)]
+        [Authorize]
         public async Task<IActionResult> ProcessAsync(
     [FromForm] PdfUploadRequest request)
         {
-            _logger.LogInformation("Recebida requisição assíncrona de processamento");
+            _logger.LogInformation("Recebida requisiï¿½ï¿½o assï¿½ncrona de processamento");
             var file = request.File;
-            // Verificar créditos ANTES de processar
+            // Verificar crï¿½ditos ANTES de processar
             var creditCheck = await CreditCheckAttribute.CheckCredits(
                 HttpContext, _userService, _logger);
 
             if (creditCheck != null)
-                return creditCheck; // Sem créditos
+                return creditCheck; // Sem crï¿½ditos
 
 
-            // Validações
+            // Validaï¿½ï¿½es
             var validationError = ValidateFile(request.File);
             if (validationError != null)
             {
@@ -69,7 +70,7 @@ namespace pdf_ocr.Controllers
                 var jobId = await _jobService.CreateJobAsync(file);
 
                 _logger.LogInformation(
-                    "Job criado: {JobId} por usuário {UserId}, arquivo {FileName}",
+                    "Job criado: {JobId} por usuï¿½rio {UserId}, arquivo {FileName}",
                     jobId, userId, file.FileName);
 
                 return Ok(new ProcessResponse
@@ -84,8 +85,8 @@ namespace pdf_ocr.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Erro ao criar job assíncrono");
-                // Devolver crédito em caso de erro
+                _logger.LogError(ex, "Erro ao criar job assï¿½ncrono");
+                // Devolver crï¿½dito em caso de erro
                 await _userService.AddCreditsAsync(GetUserId(), 1);
                 return StatusCode(500, new ErrorResponse
                 {
@@ -96,7 +97,7 @@ namespace pdf_ocr.Controllers
         }
 
         /// <summary>
-        /// DEMO: Processar sem autenticação (limitado)
+        /// DEMO: Processar sem autenticaï¿½ï¿½o (limitado)
         /// </summary>
         [HttpPost("demo")]
         [AllowAnonymous]
@@ -131,8 +132,112 @@ namespace pdf_ocr.Controllers
             });
         }
 
+        /// <summary>
+        /// Processa um PDF de forma sï¿½ncrona e retorna o arquivo processado imediatamente
+        /// </summary>
+        /// <param name="file">Arquivo PDF para processar</param>
+        /// <returns>PDF processado com OCR</returns>
+        /// <response code="200">PDF processado com sucesso</response>
+        /// <response code="400">Arquivo invï¿½lido ou muito grande</response>
+        /// <response code="500">Erro no processamento</response>
+        [HttpPost("process-sync")]
+        [Consumes("multipart/form-data")]
+        [ProducesResponseType(typeof(FileResult), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status500InternalServerError)]
+        [RequestSizeLimit(10_000_000)]
+        [Authorize]
+        public async Task<IActionResult> ProcessSync(
+        [FromForm] PdfUploadRequest request)
+        {
+            _logger.LogInformation("Recebida requisiï¿½ï¿½o sï¿½ncrona de processamento");
+            var file = request.File;
+            // Verificar crï¿½ditos ANTES de processar
+            var creditCheck = await CreditCheckAttribute.CheckCredits(
+                HttpContext, _userService, _logger);
+
+            if (creditCheck != null)
+                return creditCheck; // Sem crï¿½ditos
+
+
+            // Validaï¿½ï¿½es
+            var validationError = ValidateFile(request.File);
+            if (validationError != null)
+            {
+                return validationError;
+            }
+
+            try
+            {
+                // Criar diretï¿½rio temporï¿½rio
+                string jobDir = Path.Combine(Path.GetTempPath(), "ocr_sync", Guid.NewGuid().ToString("N"));
+                Directory.CreateDirectory(jobDir);
+
+                string inputPath = Path.Combine(jobDir, "input.pdf");
+
+                _logger.LogInformation("Salvando arquivo: {FileName} ({Size} bytes)",
+                    request.File.FileName, request.File.Length);
+
+                // Salvar arquivo
+                using (var stream = System.IO.File.Create(inputPath))
+                {
+                    await request.File.CopyToAsync(stream);
+                }
+
+                // Processar imediatamente
+                _logger.LogInformation("Iniciando processamento sï¿½ncrono");
+                var result = await Task.Run(() => OcrPipelineService.Run(jobDir));
+
+                if (!result.Success)
+                {
+                    _logger.LogError("Falha no processamento: {Error}", result.Error);
+                    // Devolver crï¿½dito em caso de erro
+                    await _userService.AddCreditsAsync(GetUserId(), 1);
+                    // Limpar diretï¿½rio temporï¿½rio
+                    CleanupDirectory(jobDir);
+
+                    return StatusCode(500, new ErrorResponse
+                    {
+                        Error = "Erro no processamento OCR",
+                        Details = result.Error,
+                        Logs = result.Logs
+                    });
+                }
+
+                // Ler arquivo processado
+                var processedBytes = await System.IO.File.ReadAllBytesAsync(result.OutputPdf);
+
+                _logger.LogInformation("Processamento concluï¿½do com sucesso. Arquivo: {Size} bytes",
+                    processedBytes.Length);
+
+                // Limpar diretï¿½rio temporï¿½rio
+                CleanupDirectory(jobDir);
+
+                // Retornar PDF processado
+                return File(
+                    processedBytes,
+                    "application/pdf",
+                    $"ocr_{request.File.FileName}"
+                );
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erro crï¿½tico no processamento sï¿½ncrono");
+                return StatusCode(500, new ErrorResponse
+                {
+                    Error = "Erro interno no servidor",
+                    Details = ex.Message
+                });
+            }
+        }
+
+
         private string GetUserId()
         {
+            // Prefer user id from ApiKey (set during credit check) for requests authenticated with an API key
+            if (HttpContext.Items.TryGetValue("ApiKeyUserId", out var obj) && obj is string apiUserId && !string.IsNullOrEmpty(apiUserId))
+                return apiUserId;
+
             return User.FindFirst(ClaimTypes.NameIdentifier)?.Value
                 ?? throw new UnauthorizedAccessException();
         }
@@ -148,7 +253,7 @@ namespace pdf_ocr.Controllers
                 return BadRequest(new ErrorResponse
                 {
                     Error = "Nenhum arquivo enviado",
-                    Details = "É necessário enviar um arquivo PDF"
+                    Details = "ï¿½ necessï¿½rio enviar um arquivo PDF"
                 });
             }
 
@@ -158,17 +263,17 @@ namespace pdf_ocr.Controllers
                 return BadRequest(new ErrorResponse
                 {
                     Error = "Arquivo muito grande",
-                    Details = "O tamanho máximo permitido é 10MB"
+                    Details = "O tamanho mï¿½ximo permitido ï¿½ 10MB"
                 });
             }
 
             if (!file.FileName.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
             {
-                _logger.LogWarning("Tipo de arquivo inválido: {FileName}", file.FileName);
+                _logger.LogWarning("Tipo de arquivo invï¿½lido: {FileName}", file.FileName);
                 return BadRequest(new ErrorResponse
                 {
-                    Error = "Tipo de arquivo inválido",
-                    Details = "Apenas arquivos PDF são aceitos"
+                    Error = "Tipo de arquivo invï¿½lido",
+                    Details = "Apenas arquivos PDF sï¿½o aceitos"
                 });
             }
 
@@ -176,7 +281,7 @@ namespace pdf_ocr.Controllers
         }
 
         /// <summary>
-        /// Limpa diretório temporário de forma segura
+        /// Limpa diretï¿½rio temporï¿½rio de forma segura
         /// </summary>
         private void CleanupDirectory(string directory)
         {
@@ -185,12 +290,12 @@ namespace pdf_ocr.Controllers
                 if (Directory.Exists(directory))
                 {
                     Directory.Delete(directory, true);
-                    _logger.LogDebug("Diretório temporário removido: {Directory}", directory);
+                    _logger.LogDebug("Diretï¿½rio temporï¿½rio removido: {Directory}", directory);
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Falha ao limpar diretório: {Directory}", directory);
+                _logger.LogWarning(ex, "Falha ao limpar diretï¿½rio: {Directory}", directory);
             }
         }
     }
@@ -202,31 +307,72 @@ namespace pdf_ocr.Controllers
             IUserService userService,
             ILogger logger)
         {
-            var userId = context.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            if (string.IsNullOrEmpty(userId))
-                return new UnauthorizedResult();
+            // Primeiro, verificar se hÃ¡ uma API key no header
+            string? apiKey = null;
+            if (context.Request.Headers.TryGetValue("X-API-Key", out var headerValues))
+            {
+                apiKey = headerValues.Count > 0 ? headerValues[0] : null;
+            }
 
-            // Custo: 1 crédito por PDF
+            string? userId = null;
+
+            if (!string.IsNullOrEmpty(apiKey))
+            {
+                // Validar chave via serviÃ§o de API Keys
+                var apiKeyService = context.RequestServices.GetService(typeof(IApiKeyService)) as IApiKeyService;
+                if (apiKeyService == null)
+                {
+                    logger.LogWarning("IApiKeyService nÃ£o estÃ¡ registrado no DI");
+                    return new UnauthorizedResult();
+                }
+
+                try
+                {
+                    userId = await apiKeyService.ValidateKeyAsync(apiKey);
+                    if (string.IsNullOrEmpty(userId))
+                    {
+                        logger.LogWarning("Chave de API invÃ¡lida ou expirada");
+                        return new UnauthorizedResult();
+                    }
+
+                    // Marcar o contexto para que o controlador possa recuperar o userId quando necessÃ¡rio
+                    context.Items["ApiKeyUserId"] = userId;
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Erro ao validar API Key");
+                    return new UnauthorizedResult();
+                }
+            }
+            else
+            {
+                // Sem API key: verificar usuÃ¡rio autenticado via Claims
+                userId = context.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+                if (string.IsNullOrEmpty(userId))
+                    return new UnauthorizedResult();
+            }
+
+            // Custo: 1 crï¿½dito por PDF
             const int COST = 1;
 
             var credits = await userService.GetCreditsAsync(userId);
             if (credits < COST)
             {
-                logger.LogWarning("Créditos insuficientes: {UserId} tem {Credits}", userId, credits);
+                logger.LogWarning("Crï¿½ditos insuficientes: {UserId} tem {Credits}", userId, credits);
                 return new ObjectResult(new
                 {
-                    error = "Créditos insuficientes",
-                    details = $"Você precisa de {COST} crédito(s). Saldo: {credits}",
+                    error = "Crï¿½ditos insuficientes",
+                    details = $"Vocï¿½ precisa de {COST} crï¿½dito(s). Saldo: {credits}",
                     upgradeUrl = "/pricing"
                 })
                 { StatusCode = 402 }; // Payment Required
             }
 
-            // Deduzir créditos
+            // Deduzir crï¿½ditos
             var success = await userService.DeductCreditsAsync(userId, COST);
             if (!success)
             {
-                return new ObjectResult(new { error = "Erro ao deduzir créditos" })
+                return new ObjectResult(new { error = "Erro ao deduzir crï¿½ditos" })
                 { StatusCode = 500 };
             }
 

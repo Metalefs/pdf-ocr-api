@@ -156,6 +156,40 @@ namespace pdf_ocr.Services
             }
         }
 
+        public async Task<Models.UserProfile?> UpdateUserAsync(
+            string userId, string name, string? avatar)
+        {
+            try
+            {
+                var user = await _supabase
+                    .From<UserRecord>()
+                    .Where(x => x.Id == userId)
+                    .Single();
+
+                if (user == null)
+                {
+                    _logger.LogWarning("Usuário não encontrado para atualização: {UserId}", userId);
+                    return null;
+                }
+
+                user.Email = user.Email;
+                user.Name = name;
+                user.Avatar = avatar;
+
+                await _supabase
+                    .From<UserRecord>()
+                    .Update(user);
+
+                _logger.LogInformation("Usuário atualizado: {UserId} - {Email}", userId, user.Email);
+                return MapToUserProfile(user);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erro ao atualizar usuário: {UserId}", userId);
+                throw;
+            }
+        }
+
         public async Task<int> GetCreditsAsync(string userId)
         {
             try

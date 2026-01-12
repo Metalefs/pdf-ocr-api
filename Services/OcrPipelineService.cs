@@ -2,8 +2,6 @@
 using iText.Forms;
 using iText.Kernel.Pdf;
 using iText.Kernel.Pdf.Canvas;
-using iText.Layout;
-using PDFiumCore;
 using SkiaSharp;
 using System.Diagnostics;
 using System.Text;
