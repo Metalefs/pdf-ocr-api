@@ -38,17 +38,12 @@ WORKDIR /app
 # ===================================================================
 # Instalar dependências necessárias + PDFium
 # ===================================================================
-RUN apt-get update && apt-get install -y \
-    # Bibliotecas para System.Drawing (necessário para PDFiumSharp)
-    libgdiplus \
-    # Dependências do PDFium
-    wget \
-    unzip \
-    # Utilitários
-    curl \
-    # Limpar cache
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+
+RUN apt-get update \    
+    && apt-get install -y --allow-unauthenticated \    
+        libc6-dev \    
+        libgdiplus \    
+        libx11-dev    
 
 # ===================================================================
 # Baixar e instalar binários nativos do PDFium
