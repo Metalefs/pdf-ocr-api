@@ -10,9 +10,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
-using SixLabors.ImageSharp;
-using SixLabors.ImageSharp.PixelFormats;
-using SixLabors.ImageSharp.Formats.Png;
+using SkiaSharp;
 using PdfPage = iText.Kernel.Pdf.PdfPage;
 
 namespace pdf_ocr
@@ -228,17 +226,32 @@ namespace pdf_ocr
 
         private static void SaveBitmapAsPng(PDFiumBitmap bitmap, string outputPath)
         {
-        #if WINDOWS
-            var data = bitmap.AsBmpStream();
-            using var bmp = new System.Drawing.Bitmap(data);
-            bmp.Save(outputPath, System.Drawing.Imaging.ImageFormat.Png);
-        #else
-            // Alternativa multiplataforma usando ImageSharp
-            var data = bitmap.AsBmpStream();
+#if WINDOWS
+    // Mantém a implementação Windows (System.Drawing é nativo e rápido aqui)
+    using var data = bitmap.AsBmpStream();
+    using var bmp = new System.Drawing.Bitmap(data);
+    bmp.Save(outputPath, System.Drawing.Imaging.ImageFormat.Png);
+#else
+            // Implementação Linux usando SkiaSharp
+            using var data = bitmap.AsBmpStream();
             data.Position = 0;
-            using var image = SixLabors.ImageSharp.Image.Load<Rgba32>(data);
-            image.Save(outputPath, new SixLabors.ImageSharp.Formats.Png.PngEncoder());
-        #endif
+
+            // Decodifica o stream BMP diretamente
+            using var skBitmap = SKBitmap.Decode(data);
+
+            // Verifica se a decodificação funcionou
+            if (skBitmap == null)
+            {
+                throw new InvalidOperationException("Falha ao decodificar o bitmap do PDFium via SkiaSharp.");
+            }
+
+            // Codifica para PNG e salva no arquivo
+            using var image = SKImage.FromBitmap(skBitmap);
+            using var pngData = image.Encode(SKEncodedImageFormat.Png, 100); // 100 = Qualidade máxima
+
+            using var fileStream = File.OpenWrite(outputPath);
+            pngData.SaveTo(fileStream);
+#endif
         }
 
         // =========================================================================

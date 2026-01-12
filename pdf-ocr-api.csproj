@@ -12,6 +12,7 @@
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.1" />
     <PackageReference Include="PDFium.LinuxV2" Version="1.1.4" />
     <PackageReference Include="PDFium.x64" Version="4648.0.0" />
+    <PackageReference Include="SkiaSharp" Version="3.119.1" />
 
     <PackageReference Include="Swashbuckle.AspNetCore" Version="10.1.0" />
     
