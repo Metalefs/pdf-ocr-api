@@ -10,6 +10,9 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
+using SixLabors.ImageSharp;
+using SixLabors.ImageSharp.PixelFormats;
+using SixLabors.ImageSharp.Formats.Png;
 using PdfPage = iText.Kernel.Pdf.PdfPage;
 
 namespace pdf_ocr
@@ -225,9 +228,17 @@ namespace pdf_ocr
 
         private static void SaveBitmapAsPng(PDFiumBitmap bitmap, string outputPath)
         {
+        #if WINDOWS
             var data = bitmap.AsBmpStream();
             using var bmp = new System.Drawing.Bitmap(data);
             bmp.Save(outputPath, System.Drawing.Imaging.ImageFormat.Png);
+        #else
+            // Alternativa multiplataforma usando ImageSharp
+            var data = bitmap.AsBmpStream();
+            data.Position = 0;
+            using var image = SixLabors.ImageSharp.Image.Load<Rgba32>(data);
+            image.Save(outputPath, new SixLabors.ImageSharp.Formats.Png.PngEncoder());
+        #endif
         }
 
         // =========================================================================
