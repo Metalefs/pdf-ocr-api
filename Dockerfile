@@ -38,6 +38,15 @@ WORKDIR /app
 # ===================================================================
 # Instalar dependências necessárias + PDFium
 # ===================================================================
+RUN apt-get update && apt-get install -y \
+    # Dependências do PDFium
+    wget \
+    unzip \
+    # Utilitários
+    curl \
+    # Limpar cache
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
 RUN apt-get update \    
     && apt-get install -y --allow-unauthenticated \    
@@ -48,11 +57,19 @@ RUN apt-get update \
 # ===================================================================
 # Baixar e instalar binários nativos do PDFium
 # ===================================================================
-RUN mkdir -p /app/runtimes/linux-x64/native && \
+RUN mkdir -p /app/runtimes/linux-x64/native /app/lib /usr/local/lib && \
     cd /tmp && \
     wget https://github.com/bblanchon/pdfium-binaries/releases/latest/download/pdfium-linux-x64.tgz && \
     tar -xzf pdfium-linux-x64.tgz && \
+    # Copiar para múltiplos locais para garantir que seja encontrado
     cp lib/libpdfium.so /app/runtimes/linux-x64/native/libpdfium.so && \
+    cp lib/libpdfium.so /app/libpdfium.so && \
+    cp lib/libpdfium.so /usr/local/lib/libpdfium.so && \
+    # Criar symlinks com nomes alternativos
+    ln -s /usr/local/lib/libpdfium.so /usr/local/lib/pdfium_x64.so && \
+    ln -s /app/libpdfium.so /app/pdfium_x64.so && \
+    # Atualizar cache de bibliotecas compartilhadas
+    ldconfig && \
     rm -rf /tmp/*
 
 # ===================================================================
