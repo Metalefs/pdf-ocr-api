@@ -258,11 +258,13 @@ namespace pdf_ocr
         // ETAPA 4: OCR com Tesseract
         // =========================================================================
         private static void RunTesseractPerPage(string imagesDir, string workDir,
-            string outputPdf, List<string> logs)
+    string outputPdf, List<string> logs)
         {
+            // 1. Preparação: Criar diretório para artefatos do OCR
             string ocrPagesDir = Path.Combine(workDir, "ocr_pages");
             Directory.CreateDirectory(ocrPagesDir);
 
+            // 2. Coletar e ordenar as imagens geradas pelo PDFium
             var images = Directory.GetFiles(imagesDir, "page_*.png");
             Array.Sort(images);
 
@@ -271,31 +273,40 @@ namespace pdf_ocr
                 throw new Exception("Nenhuma imagem encontrada para OCR");
             }
 
-            var ocrPdfs = new List<string>();
-            int index = 1;
+            // 3. Criar o arquivo de Manifesto (@list)
+            // O Tesseract processa múltiplas imagens de uma vez se passarmos um arquivo .txt
+            string manifestPath = Path.Combine(ocrPagesDir, "tesseract_input_list.txt");
+            File.WriteAllLines(manifestPath, images);
 
-            foreach (var img in images)
+            // 4. Configurar a execução em lote
+            // outBase é o prefixo do arquivo; o Tesseract adicionará automaticamente ".pdf"
+            string outBase = Path.Combine(ocrPagesDir, "tesseract_output_merged");
+
+            // Comando: tesseract "@lista.txt" "saida" -l por pdf
+            // O '@' é o operador do Tesseract para ler listas de arquivos
+            string args = $"\"{manifestPath}\" \"{outBase}\" -l por pdf";
+
+            logs.Add($"  → [OCR BATCH] Iniciando Tesseract para {images.Length} páginas...");
+
+            Stopwatch sw = Stopwatch.StartNew();
+            RunProcess("tesseract", args, "Tesseract Batch");
+            sw.Stop();
+
+            // 5. Mover o resultado para o caminho esperado pelo pipeline (Etapa 5)
+            string generatedResultPdf = outBase + ".pdf";
+            if (!File.Exists(generatedResultPdf))
             {
-                string outBase = Path.Combine(ocrPagesDir, $"ocr_{index:000}");
-                string args = $"\"{img}\" \"{outBase}\" -l por pdf";
-
-                logs.Add($"  → OCR página {index}/{images.Length}: {Path.GetFileName(img)}");
-
-                RunProcess("tesseract", args, "Tesseract");
-
-                string pdf = outBase + ".pdf";
-                if (!File.Exists(pdf))
-                {
-                    throw new Exception($"OCR falhou para: {img}");
-                }
-
-                ocrPdfs.Add(pdf);
-                logs.Add($"    ✓ Gerado: {new FileInfo(pdf).Length:N0} bytes");
-                index++;
+                throw new Exception("O Tesseract não gerou o PDF consolidado.");
             }
 
-            // Mesclar todas as páginas OCR
-            MergePdfs(ocrPdfs, outputPdf);
+            // Movemos de 'ocr_pages/tesseract_output_merged.pdf' para o caminho de 'tesseractOcr'
+            if (File.Exists(outputPdf)) File.Delete(outputPdf);
+            File.Move(generatedResultPdf, outputPdf);
+
+            logs.Add($"    ✓ OCR consolidado em {sw.Elapsed.TotalSeconds:F2}s: {new FileInfo(outputPdf).Length:N0} bytes");
+
+            // NOTA: O método MergePdfs() não é mais chamado aqui, pois o Tesseract 
+            // já entregou as páginas devidamente ordenadas e unidas no arquivo final.
         }
 
         private static void MergePdfs(List<string> inputPdfs, string outputPdf)

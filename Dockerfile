@@ -46,6 +46,9 @@ libfontconfig1 \
     unzip \
     # Utilitários
     curl \
+    ca-certificates \
+    tesseract-ocr \
+    tesseract-ocr-por \
     # Limpar cache
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
