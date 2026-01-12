@@ -95,7 +95,19 @@ builder.Services.AddHealthChecks();
 // ============================================
 
 builder.Services.AddSingleton<IJobService, JobService>();
-builder.Services.AddSingleton<IUserService, UserService>();
+// **IMPORTANTE**: Trocar para Supabase em produção
+// Desenvolvimento: UserService (em memória)
+// Produção: SupabaseUserService (banco de dados)
+if (builder.Environment.IsDevelopment())
+{
+    //builder.Services.AddSingleton<IUserService, UserService>();
+    builder.Services.AddSingleton<IUserService, SupabaseUserService>();
+}
+else
+{
+    // Produção: usar Supabase
+    builder.Services.AddSingleton<IUserService, SupabaseUserService>();
+}
 //builder.Services.AddSupabaseAuth(builder.Configuration);
 // Configure authentication with JWT Bearer using Supabase OpenID Connect metadata
 var supabaseUrl = builder.Configuration["Supabase:Url"]?.TrimEnd('/');

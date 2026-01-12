@@ -1,7 +1,6 @@
 ﻿// Controllers/UsersController.cs
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using pdf_ocr.Middleware;
 using pdf_ocr.Services;
 using System.Security.Claims;
 
@@ -27,15 +26,55 @@ namespace pdf_ocr.Controllers
         [HttpGet("me")]
         public async Task<IActionResult> GetProfile()
         {
-            var userId = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            if (string.IsNullOrEmpty(userId))
-                return Unauthorized();
+            try
+            {
+                var userId = GetUserId();
+                var email = User.FindFirst(ClaimTypes.Email)?.Value ?? "";
+                var name = User.FindFirst(ClaimTypes.Name)?.Value ?? "";
 
-            var email = User.FindFirst(ClaimTypes.Email)?.Value ?? "";
-            var name = User.FindFirst(ClaimTypes.Name)?.Value ?? "";
+                var user = await _userService.GetOrCreateUserAsync(userId, email, name, null, null);
 
-            var user = await _userService.GetOrCreateUserAsync(userId, email, name, null);
-            return Ok(user);
+                if (user == null)
+                {
+                    return NotFound(new { error = "Usuário não encontrado" });
+                }
+
+                return Ok(user);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erro ao obter perfil do usuário");
+                return StatusCode(500, new { error = "Erro interno do servidor" });
+            }
+        }
+
+        /// <summary>
+        /// Atualiza perfil do usuário
+        /// </summary>
+        [HttpPut("me")]
+        public async Task<IActionResult> UpdateProfile([FromBody] UpdateProfileRequest request)
+        {
+            try
+            {
+                var userId = GetUserId();
+                var email = User.FindFirst(ClaimTypes.Email)?.Value ?? "";
+
+                // Buscar usuário atual
+                var user = await _userService.GetOrCreateUserAsync(userId, email, request.Name, request.Avatar, null);
+
+                if (user == null)
+                {
+                    return NotFound(new { error = "Usuário não encontrado" });
+                }
+
+                // Retornar usuário atualizado
+                return Ok(user);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erro ao atualizar perfil");
+                return StatusCode(500, new { error = "Erro ao atualizar perfil" });
+            }
         }
 
         /// <summary>
@@ -44,48 +83,77 @@ namespace pdf_ocr.Controllers
         [HttpGet("credits")]
         public async Task<IActionResult> GetCredits()
         {
-            var userId = GetUserId();
-            var credits = await _userService.GetCreditsAsync(userId);
-
-            return Ok(new
+            try
             {
-                credits,
-                resetDate = GetNextResetDate(),
-                plan = await GetUserPlan(userId)
-            });
+                var userId = GetUserId();
+                var credits = await _userService.GetCreditsAsync(userId);
+                var plan = await GetUserPlan(userId);
+
+                return Ok(new
+                {
+                    credits,
+                    resetDate = GetNextResetDate(),
+                    plan
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erro ao obter créditos");
+                return StatusCode(500, new { error = "Erro ao obter créditos" });
+            }
         }
 
         /// <summary>
-        /// Histórico de uso (simplificado)
+        /// Histórico de uso
         /// </summary>
         [HttpGet("usage")]
-        public IActionResult GetUsage()
+        public async Task<IActionResult> GetUsage()
         {
-            // TODO: Implementar histórico real
-            return Ok(new
+            try
             {
-                today = 3,
-                week = 15,
-                month = 42,
-                limit = GetDailyLimit()
-            });
+                var userId = GetUserId();
+                var plan = await GetUserPlan(userId);
+
+                // TODO: Implementar consulta real no Supabase (função get_user_usage_stats)
+                // Por enquanto, retornar valores fictícios
+                return Ok(new
+                {
+                    today = 0,
+                    week = 0,
+                    month = 0,
+                    limit = GetDailyLimit(plan)
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erro ao obter uso");
+                return StatusCode(500, new { error = "Erro ao obter uso" });
+            }
         }
 
         private string GetUserId()
         {
             return User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-                ?? throw new UnauthorizedAccessException();
+                ?? throw new UnauthorizedAccessException("Usuário não autenticado");
         }
 
         private async Task<string> GetUserPlan(string userId)
         {
-            var user = await _userService.GetOrCreateUserAsync(userId, "", "", null, null);
-            return user?.Plan ?? "free";
+            try
+            {
+                var email = User.FindFirst(ClaimTypes.Email)?.Value ?? "";
+                var name = User.FindFirst(ClaimTypes.Name)?.Value ?? "";
+                var user = await _userService.GetOrCreateUserAsync(userId, email, name, null, null);
+                return user?.Plan ?? "free";
+            }
+            catch
+            {
+                return "free";
+            }
         }
 
-        private int GetDailyLimit()
+        private static int GetDailyLimit(string plan)
         {
-            var plan = GetUserPlan(GetUserId()).Result;
             return plan switch
             {
                 "free" => 3,
@@ -95,7 +163,7 @@ namespace pdf_ocr.Controllers
             };
         }
 
-        private DateTime GetNextResetDate()
+        private static DateTime GetNextResetDate()
         {
             var now = DateTime.UtcNow;
             return new DateTime(now.Year, now.Month, now.Day, 0, 0, 0, DateTimeKind.Utc)
@@ -103,43 +171,9 @@ namespace pdf_ocr.Controllers
         }
     }
 
-    // Atualizar PdfController para verificar créditos
-    public static class CreditCheckAttribute
+    public class UpdateProfileRequest
     {
-        public static async Task<IActionResult?> CheckCredits(
-            HttpContext context,
-            IUserService userService,
-            ILogger logger)
-        {
-            var userId = context.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            if (string.IsNullOrEmpty(userId))
-                return new UnauthorizedResult();
-
-            // Custo: 1 crédito por PDF
-            const int COST = 1;
-
-            var credits = await userService.GetCreditsAsync(userId);
-            if (credits < COST)
-            {
-                logger.LogWarning("Créditos insuficientes: {UserId} tem {Credits}", userId, credits);
-                return new ObjectResult(new
-                {
-                    error = "Créditos insuficientes",
-                    details = $"Você precisa de {COST} crédito(s). Saldo: {credits}",
-                    upgradeUrl = "/pricing"
-                })
-                { StatusCode = 402 }; // Payment Required
-            }
-
-            // Deduzir créditos
-            var success = await userService.DeductCreditsAsync(userId, COST);
-            if (!success)
-            {
-                return new ObjectResult(new { error = "Erro ao deduzir créditos" })
-                { StatusCode = 500 };
-            }
-
-            return null; // OK, pode processar
-        }
+        public string Name { get; set; } = string.Empty;
+        public string? Avatar { get; set; }
     }
 }

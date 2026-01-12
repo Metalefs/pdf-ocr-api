@@ -194,4 +194,43 @@ namespace pdf_ocr.Controllers
             }
         }
     }
+
+    public static class CreditCheckAttribute
+    {
+        public static async Task<IActionResult?> CheckCredits(
+            HttpContext context,
+            IUserService userService,
+            ILogger logger)
+        {
+            var userId = context.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(userId))
+                return new UnauthorizedResult();
+
+            // Custo: 1 crédito por PDF
+            const int COST = 1;
+
+            var credits = await userService.GetCreditsAsync(userId);
+            if (credits < COST)
+            {
+                logger.LogWarning("Créditos insuficientes: {UserId} tem {Credits}", userId, credits);
+                return new ObjectResult(new
+                {
+                    error = "Créditos insuficientes",
+                    details = $"Você precisa de {COST} crédito(s). Saldo: {credits}",
+                    upgradeUrl = "/pricing"
+                })
+                { StatusCode = 402 }; // Payment Required
+            }
+
+            // Deduzir créditos
+            var success = await userService.DeductCreditsAsync(userId, COST);
+            if (!success)
+            {
+                return new ObjectResult(new { error = "Erro ao deduzir créditos" })
+                { StatusCode = 500 };
+            }
+
+            return null; // OK, pode processar
+        }
+    }
 }

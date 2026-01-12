@@ -108,7 +108,7 @@ namespace pdf_ocr
             }
         }
 
-        private static void RenderPageAsNonSelectableContent(PdfPage page)
+        private static void RenderPageAsNonSelectableContent(PdfPage page, Boolean makeInvisible = false)
         {
             // Remove annotations
             page.GetAnnotations()?.Clear();
@@ -122,7 +122,7 @@ namespace pdf_ocr
                 var stream = canvas.GetContentStream().GetOutputStream();
 
                 // Tornar texto invisível (modo 3 = invisível)
-                stream.Write(Encoding.ASCII.GetBytes("3 Tr\n"));
+                if (makeInvisible) stream.Write(System.Text.Encoding.ASCII.GetBytes("3 Tr\n"));
                 stream.Write(contentBytes);
                 stream.Write(Encoding.ASCII.GetBytes("0 Tr\n"));
 

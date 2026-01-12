@@ -45,10 +45,10 @@ namespace pdf_ocr.Controllers
                     Id = "free",
                     Name = "Free",
                     Price = 0,
-                    Credits = 10,
+                    Credits = 3,
                     Features = new[]
                     {
-                        "10 créditos/mês",
+                        "3 créditos/mês",
                         "PDFs até 5MB",
                         "Processamento padrão"
                     }
