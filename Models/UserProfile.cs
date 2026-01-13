@@ -11,7 +11,10 @@ namespace pdf_ocr.Models
         public string? Avatar { get; set; }
         public int Credits { get; set; }
         public string Plan { get; set; } = "free"; // free, pro, business
+        public string? StripeCustomerId { get; set; }
+        public string? StripeSubscriptionId { get; set; }
         public DateTime CreatedAt { get; set; }
+        public DateTime? UpdatedAt { get; set; }
         public DateTime? SubscriptionEndsAt { get; set; }
     }
     public class UserMetadata

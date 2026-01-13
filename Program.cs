@@ -50,6 +50,7 @@ builder.Services.AddCors(options =>
 
 // Add custom services
 builder.Services.AddSingleton<IJobService, JobService>();
+builder.Services.AddSingleton<IStripePlansService, StripePlansService>();
 // Add services to the container.
 
 builder.Services.AddControllers();

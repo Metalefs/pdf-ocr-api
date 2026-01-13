@@ -1,13 +1,15 @@
 ﻿// Services/SupabaseUserService.cs
 using Microsoft.AspNetCore.Mvc.RazorPages;
-using Postgrest.Models;
-using Supabase;
+using pdf_ocr.Models;
 using Postgrest;
 using Postgrest.Attributes;
+using Postgrest.Models;
+using Supabase;
+using Supabase.Gotrue;
 using System.ComponentModel.DataAnnotations.Schema;
 using System.Text.Json.Serialization;
-using TableAttribute = Postgrest.Attributes.TableAttribute;
 using ColumnAttribute = Postgrest.Attributes.ColumnAttribute;
+using TableAttribute = Postgrest.Attributes.TableAttribute;
 
 namespace pdf_ocr.Services
 {
@@ -52,6 +54,14 @@ namespace pdf_ocr.Services
         [Column("stripe_customer_id")]
         [JsonPropertyName("stripe_customer_id")]
         public string? StripeCustomerId { get; set; }
+
+        [Column("stripe_subscription_id")]
+        [JsonPropertyName("stripe_subscription_id")]
+        public string? StripeSubscriptionId { get; set; }
+
+        [Column("updated_at")]
+        [JsonPropertyName("updated_at")]
+        public DateTime? UpdatedAt { get; set; }
     }
 
     [Table("usage_history")]
@@ -107,6 +117,11 @@ namespace pdf_ocr.Services
 
             _supabase = new Supabase.Client(url, key, options);
             _logger.LogInformation("SupabaseUserService inicializado");
+        }
+
+        public Task<UserProfile?> GetUserAsync(string userId)
+        {
+            return GetOrCreateUserAsync(userId, "", "", null);
         }
 
         public async Task<Models.UserProfile?> GetOrCreateUserAsync(
@@ -187,6 +202,57 @@ namespace pdf_ocr.Services
             {
                 _logger.LogError(ex, "Erro ao atualizar usuário: {UserId}", userId);
                 throw;
+            }
+        }
+
+        public async Task UpdateUserPlanAsync(
+        string userId,
+        string plan,
+        int credits,
+        string? subscriptionId = null)
+        {
+            try
+            {
+                var user = await _supabase
+                    .From<UserRecord>()
+                    .Where(u => u.Id == userId)
+                    .Single();
+
+                if (user == null)
+                {
+                    throw new Exception($"Usuário {userId} não encontrado");
+                }
+
+                user.Plan = plan;
+                user.Credits = credits;
+                user.StripeSubscriptionId = subscriptionId;
+                user.UpdatedAt = DateTime.UtcNow;
+
+                await _supabase
+                    .From<UserRecord>()
+                    .Update(user);
+
+                _logger.LogInformation("Plano atualizado: {UserId} -> {Plan} (Sub: {SubId})",
+                    userId, plan, subscriptionId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erro ao atualizar plano: {UserId}", userId);
+                throw;
+            }
+        }
+
+        public async Task<bool> ValidateUserCreditsAsync(string userId, int requiredCredits)
+        {
+            try
+            {
+                var user = await GetUserAsync(userId);
+                return user != null && user.Credits >= requiredCredits;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erro ao validar créditos: {UserId}", userId);
+                return false;
             }
         }
 
@@ -367,7 +433,10 @@ namespace pdf_ocr.Services
                 Credits = record.Credits,
                 Plan = record.Plan,
                 CreatedAt = record.CreatedAt,
-                SubscriptionEndsAt = record.SubscriptionEndsAt
+                UpdatedAt = record.UpdatedAt,
+                SubscriptionEndsAt = record.SubscriptionEndsAt,
+                StripeSubscriptionId = record.StripeSubscriptionId,
+                StripeCustomerId = record.StripeCustomerId,
             };
         }
     }

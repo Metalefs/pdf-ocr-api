@@ -1,221 +1,290 @@
-﻿// Controllers/PaymentController.cs
-using Microsoft.AspNetCore.Authorization;
+﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using pdf_ocr.Middleware;
-using pdf_ocr.Models;
 using pdf_ocr.Services;
+using StackExchange.Redis;
 using Stripe;
 using Stripe.Checkout;
+using Stripe.V2.Core;
 using System.Security.Claims;
+using Event = Stripe.Event;
 
-namespace pdf_ocr.Controllers
+namespace pdf_ocr.Controllers;
+
+[ApiController]
+[Route("api/[controller]")]
+[Produces("application/json")]
+public class PaymentController : ControllerBase
 {
-    [ApiController]
-    [Route("api/[controller]")]
-    [Authorize]
-    public class PaymentController : ControllerBase
+    private readonly ILogger<PaymentController> _logger;
+    private readonly IConfiguration _config;
+    private readonly IUserService _userService;
+    private readonly IStripePlansService _plansService;
+    private readonly string _stripeSecretKey;
+    private readonly string _webhookSecret;
+
+    public PaymentController(
+        ILogger<PaymentController> logger,
+        IConfiguration config,
+        IUserService userService,
+        IStripePlansService plansService)
     {
-        private readonly IUserService _userService;
-        private readonly IConfiguration _config;
-        private readonly ILogger<PaymentController> _logger;
+        _logger = logger;
+        _config = config;
+        _userService = userService;
+        _plansService = plansService;
 
-        public PaymentController(
-            IUserService userService,
-            IConfiguration config,
-            ILogger<PaymentController> logger)
+        _stripeSecretKey = config["Stripe:SecretKey"]
+            ?? throw new InvalidOperationException("Stripe:SecretKey não configurada");
+        _webhookSecret = config["Stripe:WebhookSecret"]
+            ?? throw new InvalidOperationException("Stripe:WebhookSecret não configurada");
+
+        StripeConfiguration.ApiKey = _stripeSecretKey;
+    }
+
+    /// <summary>
+    /// Retorna planos disponíveis dinamicamente do Stripe
+    /// </summary>
+    [HttpGet("plans")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(List<PlanDto>), 200)]
+    public async Task<IActionResult> GetPlans()
+    {
+        try
         {
-            _userService = userService;
-            _config = config;
-            _logger = logger;
-
-            StripeConfiguration.ApiKey = config["Stripe:SecretKey"];
-        }
-
-        /// <summary>
-        /// Planos disponíveis
-        /// </summary>
-        [HttpGet("plans")]
-        [AllowAnonymous]
-        public IActionResult GetPlans()
-        {
-            var plans = new[]
-            {
-                new PlanDto
-                {
-                    Id = "free",
-                    Name = "Free",
-                    Price = 0,
-                    Credits = 3,
-                    Features = new[]
-                    {
-                        "3 créditos/mês",
-                        "PDFs até 5MB",
-                        "Processamento padrão"
-                    }
-                },
-                new PlanDto
-                {
-                    Id = "pro",
-                    Name = "Pro",
-                    Price = 9.99f,
-                    Credits = 100,
-                    PriceId = "price_1SotFcFKr62FCO6Sn4ZgcBxA", // Criar no Stripe Dashboard
-                    Features = new[]
-                    {
-                        "100 créditos/mês",
-                        "PDFs até 20MB",
-                        "Processamento prioritário",
-                        "Suporte por email"
-                    }
-                },
-                new PlanDto
-                {
-                    Id = "business",
-                    Name = "Business",
-                    Price = 19.99f,
-                    Credits = 500,
-                    PriceId = "price_1SotJcFKr62FCO6SWNuekEhb",
-                    Features = new[]
-                    {
-                        "créditos ilimitados",
-                        "PDFs ilimitados",
-                        "API access",
-                        "Suporte dedicado"
-                    }
-                }
-            };
+            var plans = await _plansService.GetPlansAsync();
             return Ok(plans);
         }
-
-        /// <summary>
-        /// Criar sessão de checkout Stripe
-        /// </summary>
-        [HttpPost("checkout")]
-        public async Task<IActionResult> CreateCheckout([FromBody] CheckoutRequest request)
+        catch (Exception ex)
         {
-            var userId = GetUserId();
-            var user = await _userService.GetOrCreateUserAsync(userId, "", "", null);
+            _logger.LogError(ex, "Erro ao buscar planos");
+            return StatusCode(500, new { error = "Erro ao buscar planos" });
+        }
+    }
 
+    /// <summary>
+    /// Cria sessão de checkout do Stripe
+    /// </summary>
+    [HttpPost("checkout")]
+    [Authorize]
+    [ProducesResponseType(typeof(CheckoutResponse), 200)]
+    [ProducesResponseType(400)]
+    [ProducesResponseType(401)]
+    public async Task<IActionResult> CreateCheckout([FromBody] CheckoutRequest req)
+    {
+        try
+        {
+            // Validar request
+            if (string.IsNullOrWhiteSpace(req.PriceId))
+            {
+                return BadRequest(new { error = "PriceId é obrigatório" });
+            }
+
+            // Obter usuário do token
+            var userId = GetUserId();
+            if (string.IsNullOrEmpty(userId))
+            {
+                return Unauthorized(new { error = "Token inválido" });
+            }
+
+            var user = await _userService.GetUserAsync(userId);
+            if (user == null)
+            {
+                return NotFound(new { error = "Usuário não encontrado" });
+            }
+
+            // Determinar URLs baseado no ambiente
+            var isDev = _config.GetValue<bool>("IsDevelopment");
+            var frontendUrl = _config["FrontendUrl"];
+
+            // Criar sessão do Stripe
             var options = new SessionCreateOptions
             {
                 PaymentMethodTypes = new List<string> { "card" },
                 LineItems = new List<SessionLineItemOptions>
                 {
-                    new()
+                    new SessionLineItemOptions
                     {
-                        Price = request.PriceId,
-                        Quantity = 1,
+                        Price = req.PriceId,
+                        Quantity = 1
                     }
                 },
                 Mode = "subscription",
-                SuccessUrl = $"{request.SuccessUrl}?session_id={{CHECKOUT_SESSION_ID}}",
-                CancelUrl = request.CancelUrl,
+                SuccessUrl = $"{frontendUrl}/account?payment=success",
+                CancelUrl = $"{frontendUrl}/plans?payment=cancelled",
+                CustomerEmail = user.Email,
                 ClientReferenceId = userId,
-                CustomerEmail = user?.Email,
                 Metadata = new Dictionary<string, string>
                 {
-                    { "user_id", userId },
-                    { "plan", request.PlanId }
+                    { "userId", userId },
+                    { "email", user.Email },
+                    { "plan", req.PlanId }
                 }
             };
 
             var service = new SessionService();
             var session = await service.CreateAsync(options);
 
-            _logger.LogInformation("Checkout criado: {SessionId} para {UserId}", session.Id, userId);
+            _logger.LogInformation("Checkout criado: {SessionId} para usuário {UserId}",
+                session.Id, userId);
 
-            return Ok(new { sessionId = session.Id, url = session.Url });
-        }
-
-        /// <summary>
-        /// Webhook Stripe - processa eventos de pagamento
-        /// </summary>
-        [HttpPost("webhook")]
-        [AllowAnonymous]
-        public async Task<IActionResult> StripeWebhook()
-        {
-            var json = await new StreamReader(HttpContext.Request.Body).ReadToEndAsync();
-            var stripeSignature = Request.Headers["Stripe-Signature"];
-
-            try
+            return Ok(new CheckoutResponse
             {
-                var webhookSecret = _config["Stripe:WebhookSecret"];
-                var stripeEvent = EventUtility.ConstructEvent(
-                    json, stripeSignature, webhookSecret);
-
-                _logger.LogInformation("Webhook recebido: {Type}", stripeEvent.Type);
-
-                // Processar eventos
-                switch (stripeEvent.Type)
-                {
-                    case "checkout.session.completed":
-                        await HandleCheckoutCompleted(stripeEvent);
-                        break;
-
-                    case "customer.subscription.updated":
-                    case "customer.subscription.deleted":
-                        await HandleSubscriptionChange(stripeEvent);
-                        break;
-                }
-
-                return Ok();
-            }
-            catch (StripeException ex)
-            {
-                _logger.LogError(ex, "Erro no webhook Stripe");
-                return BadRequest();
-            }
+                SessionId = session.Id,
+                Url = session.Url
+            });
         }
-
-        private async Task HandleCheckoutCompleted(Event stripeEvent)
+        catch (StripeException ex)
         {
-            var session = stripeEvent.Data.Object as Session;
-            if (session == null) return;
-
-            var userId = session.ClientReferenceId;
-            var plan = session.Metadata["plan"];
-
-            // Atualizar plano do usuário
-            var expiresAt = DateTime.UtcNow.AddMonths(1);
-            await _userService.UpdatePlanAsync(userId, plan, expiresAt);
-
-            // Adicionar créditos
-            var credits = plan switch
-            {
-                "pro" => 100,
-                "business" => 500,
-                _ => 10
-            };
-            await _userService.AddCreditsAsync(userId, credits);
-
-            _logger.LogInformation(
-                "Assinatura ativada: {UserId} → {Plan} (+{Credits} créditos)",
-                userId, plan, credits);
+            _logger.LogError(ex, "Erro no Stripe: {Message}", ex.Message);
+            return BadRequest(new { error = ex.Message });
         }
-
-        private async Task HandleSubscriptionChange(Event stripeEvent)
+        catch (Exception ex)
         {
-            var subscription = stripeEvent.Data.Object as Subscription;
-            if (subscription == null) return;
-
-            // Buscar usuário pelo customer ID
-            // TODO: Implementar lookup de customer_id → user_id
-
-            _logger.LogInformation("Assinatura atualizada: {Status}", subscription.Status);
-        }
-
-        private string GetUserId()
-        {
-            return User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-                ?? throw new UnauthorizedAccessException();
+            _logger.LogError(ex, "Erro ao criar checkout");
+            return StatusCode(500, new { error = "Erro ao criar checkout" });
         }
     }
 
-    public class CheckoutRequest
+    /// <summary>
+    /// Webhook do Stripe (eventos de pagamento)
+    /// </summary>
+    [HttpPost("webhook")]
+    [AllowAnonymous]
+    public async Task<IActionResult> StripeWebhook()
     {
-        public string PlanId { get; set; } = "";
-        public string PriceId { get; set; } = "";
-        public string SuccessUrl { get; set; } = "";
-        public string CancelUrl { get; set; } = "";
+        var json = await new StreamReader(HttpContext.Request.Body).ReadToEndAsync();
+
+        try
+        {
+            var signature = Request.Headers["Stripe-Signature"];
+            var stripeEvent = EventUtility.ConstructEvent(
+                json,
+                signature,
+                _webhookSecret
+            );
+
+            _logger.LogInformation("Webhook recebido: {Type}", stripeEvent.Type);
+            var subscription = stripeEvent.Data.Object as Subscription;
+            // Processar eventos
+            switch (stripeEvent.Type)
+            {
+                case "checkout.session.completed":
+                    var session = await this.RetrieveCheckoutSession((stripeEvent.Data.Object as Session).Id);
+                    await HandleCheckoutCompleted(session);
+                    break;
+
+                case "customer.subscription.updated":
+                    await HandleSubscriptionUpdated(subscription);
+                    break;
+                case "customer.subscription.deleted":
+                    await HandleSubscriptionCancelled(subscription);
+                    break;
+            }
+
+            return Ok();
+        }
+        catch (StripeException ex)
+        {
+            _logger.LogError(ex, "Erro no webhook: {Message}", ex.Message);
+            return BadRequest();
+        }
     }
+
+    async Task<Session> RetrieveCheckoutSession(string sessionId)
+    {
+        StripeConfiguration.ApiKey = _stripeSecretKey;
+
+        var service = new SessionService();
+
+        try
+        {
+            var options = new SessionGetOptions
+            {
+                Expand = new List<string> { "line_items" }
+            };
+            
+            Session session = await service.GetAsync(sessionId, options);
+            Console.WriteLine($"Successfully retrieved session: {session.Id}");
+            return session;
+        }
+        catch (StripeException e)
+        {
+            Console.WriteLine($"Error retrieving session: {e.Message}");
+            return null;
+        }
+    }
+
+    private async Task HandleCheckoutCompleted(Session? session)
+    {
+        if (session?.ClientReferenceId == null) return;
+
+        var userId = session.ClientReferenceId;
+        var priceId = session.LineItems?.Data[0]?.Price?.Id;
+
+        if (string.IsNullOrEmpty(priceId))
+        {
+            _logger.LogError("PriceId não encontrado no checkout");
+            return;
+        }
+
+        // Buscar plano correspondente
+        var plans = await _plansService.GetPlansAsync();
+        var plan = plans.FirstOrDefault(p => p.PriceId == priceId);
+
+        if (plan == null)
+        {
+            _logger.LogError("Plano não encontrado para priceId: {PriceId}", priceId);
+            return;
+        }
+
+        // Atualizar usuário
+        await _userService.UpdateUserPlanAsync(userId, plan.Name.ToLower(), plan.Credits);
+
+        _logger.LogInformation(
+                 "Assinatura ativada: {UserId} → {Plan} (+{Credits} créditos)",
+                 userId, plan.Name, plan.Credits);
+    }
+
+    private async Task HandleSubscriptionUpdated(Subscription? subscription)
+    {
+        if (subscription?.CustomerId == null) return;
+
+        // Lógica de atualização de assinatura
+        _logger.LogInformation("Assinatura atualizada: {SubId}", subscription.Id);
+        await Task.CompletedTask;
+    }
+
+    private async Task HandleSubscriptionCancelled(Subscription? subscription)
+    {
+        if (subscription?.CustomerId == null) return;
+
+        // Lógica de cancelamento de assinatura
+        // TODO: Implementar lookup de customer_id → user_id
+        _logger.LogInformation("Assinatura cancelada: {SubId}", subscription.Id);
+        await Task.CompletedTask;
+    }
+
+    private string GetUserId()
+    {
+        return User.FindFirst(ClaimTypes.NameIdentifier)?.Value
+            ?? throw new UnauthorizedAccessException();
+    }
+}
+
+// ============================================
+// DTOs
+// ============================================
+
+public class CheckoutRequest
+{
+    public string PlanId { get; set; } = "";
+    public string PriceId { get; set; } = "";
+    public string SuccessUrl { get; set; } = "";
+    public string CancelUrl { get; set; } = "";
+}
+
+public class CheckoutResponse
+{
+    public string SessionId { get; set; } = "";
+    public string Url { get; set; } = "";
 }

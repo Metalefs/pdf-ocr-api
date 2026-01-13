@@ -5,6 +5,7 @@ namespace pdf_ocr.Services
 {
     public interface IUserService
     {
+        Task<UserProfile?> GetUserAsync(string userId);
         Task<UserProfile?> GetOrCreateUserAsync(string userId, string email, string name, string? avatar, string? user_metadata = null);
         Task<int> GetCreditsAsync(string userId);
         Task<bool> DeductCreditsAsync(string userId, int amount);
@@ -13,6 +14,7 @@ namespace pdf_ocr.Services
         Task<UsageStats?> GetUsageStatsAsync(string userId);
         Task<bool> RecordUsageAsync(string userId, int creditsUsed, string? fileName, long? fileSize);
         Task<Models.UserProfile?> UpdateUserAsync(string userId, string name, string? avatar);
+        Task UpdateUserPlanAsync(string userId, string plan, int credits, string? subscriptionId = null);
     }
 
     public class UserService : IUserService
@@ -37,7 +39,7 @@ namespace pdf_ocr.Services
                     Name = name,
                     User_metadata = user_metadata,
                     Avatar = avatar,
-                    Credits = 2, // 2 créditos grátis
+                    Credits = 3, // 3 créditos grátis
                     Plan = "free",
                     CreatedAt = DateTime.UtcNow
                 };
@@ -130,6 +132,16 @@ namespace pdf_ocr.Services
         }
 
         public Task<Models.UserProfile?> UpdateUserAsync(string userId, string name, string? avatar)
+        {
+            throw new NotImplementedException();
+        }
+
+        public Task<UserProfile?> GetUserAsync(string userId)
+        {
+            return Task.FromResult(_users.GetValueOrDefault(userId));
+        }
+
+        public Task UpdateUserPlanAsync(string userId, string plan, int credits, string? subscriptionId = null)
         {
             throw new NotImplementedException();
         }
