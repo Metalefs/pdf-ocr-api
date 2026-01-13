@@ -57,7 +57,7 @@ namespace pdf_ocr.Services
     [Table("usage_history")]
     public class SupabaseUsageHistoryRecord : BaseModel
     {
-        [PrimaryKey("id", true)]
+        [PrimaryKey("id", false)]
         [JsonPropertyName("id")]
         public long Id { get; set; }
 

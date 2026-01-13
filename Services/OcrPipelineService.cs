@@ -450,7 +450,7 @@ namespace pdf_ocr
                 });
             }
 
-            Report("Iniciando OCR (Tesseract)...");
+            Report("Iniciando OCR...");
 
             // Parallelize across CPU cores. 
             // MaxDegreeOfParallelism should be roughly your CPU core count.
