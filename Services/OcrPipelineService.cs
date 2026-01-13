@@ -13,6 +13,13 @@ namespace pdf_ocr
     {
         public record PipelineResult(bool Success, string OutputPdf, List<string> Logs, string Error);
 
+        // Uses JobProgressInfo directly to avoid duplicate DTO shapes.
+        // This keeps JobService updates simple.
+        public static PipelineResult Run(string jobDir)
+        {
+            return Run(jobDir, onLog: null, onProgress: null);
+        }
+
         private static readonly bool IsDebug = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT") == "Development";
 
         private static readonly string DebugRoot =
@@ -57,7 +64,10 @@ namespace pdf_ocr
             }
         }
 
-        public static PipelineResult Run(string jobDir)
+        public static PipelineResult Run(
+            string jobDir,
+            Action<string>? onLog,
+            Action<pdf_ocr.Models.JobProgressInfo>? onProgress)
         {
             SetupLinuxFonts();
             var logs = new List<string>();
@@ -87,7 +97,27 @@ namespace pdf_ocr
                 if (!File.Exists(inputPdf))
                     return new PipelineResult(false, "", logs, "Arquivo input.pdf não encontrado");
 
-                logs.Add($"[INÍCIO] Pipeline iniciado. DebugMode: {IsDebug}");
+                void AddLog(string line)
+                {
+                    logs.Add(line);
+                    onLog?.Invoke(line);
+                }
+
+                void ReportProgress(string stage, string message, int? percent = null, int? totalPages = null, int? processedPages = null, List<int>? activePages = null)
+                {
+                    onProgress?.Invoke(new pdf_ocr.Models.JobProgressInfo
+                    {
+                        Stage = stage,
+                        Message = message,
+                        Percent = percent,
+                        TotalPages = totalPages,
+                        ProcessedPages = processedPages,
+                        ActivePages = activePages
+                    });
+                }
+
+                AddLog($"[INÍCIO] Pipeline iniciado. DebugMode: {IsDebug}");
+                ReportProgress("pipeline", "Preparando pipeline...", percent: 2);
 
                 // Caminhos dos arquivos intermediários
                 string processedPdf = Path.Combine(jobDir, "1_vector_cleaned.pdf");
@@ -97,24 +127,26 @@ namespace pdf_ocr
                 string outputPdf = Path.Combine(jobDir, "output_final.pdf");
 
                 // ETAPA 1: Limpeza Vetorial
-                logs.Add("[ETAPA 1] Removendo texto selecionável original...");
+                AddLog("[ETAPA 1] Removendo texto selecionável original...");
+                ReportProgress("vector-clean", "Removendo texto selecionável original...", percent: 8);
                 ProcessPdfWithVectorText(inputPdf, processedPdf);
                 DebugCopy(processedPdf, debugJobDir, "01_vector_cleaned");
 
                 // ETAPA 2: Remoção de Visuais de Formulário
-                logs.Add("[ETAPA 2] Isolando base para OCR...");
+                AddLog("[ETAPA 2] Isolando base para OCR...");
+                ReportProgress("forms-base", "Preparando PDF para OCR (preservando formulários)...", percent: 15);
                 RemoveFormVisualsOnly(processedPdf, noFormsPdf);
                 DebugCopy(noFormsPdf, debugJobDir, "02_no_forms_visuals");
 
                 // ETAPA 3: Renderização para Imagem
-                logs.Add("[ETAPA 3] Renderizando PDF para JPG (Alta Definição)...");
+                AddLog("[ETAPA 3] Renderizando PDF para JPG (Alta Definição)...");
                 Directory.CreateDirectory(imagesDir);
-                int imageCount = RenderPdfToImages(noFormsPdf, imagesDir, logs);
+                int imageCount = RenderPdfToImages(noFormsPdf, imagesDir, AddLog, onProgress);
                 DebugCopyDir(imagesDir, debugJobDir, "03_images_render");
 
                 // ETAPA 4: OCR
-                logs.Add("[ETAPA 4] Tesseract: Gerando camada de texto invisível...");
-                RunTesseractParallel(imagesDir, jobDir, logs);
+                AddLog("[ETAPA 4] Tesseract: Gerando camada de texto invisível...");
+                RunTesseractParallel(imagesDir, jobDir, AddLog, onProgress);
                 DebugCopy(tesseractOcr, debugJobDir, "04_tesseract_text_layer");
                 DebugCopyDir(
                     Path.Combine(jobDir, "ocr_debug_temp"),
@@ -122,17 +154,25 @@ namespace pdf_ocr
                     "04b_ocr_internal"
                 );
                 // ETAPA 5: Recomposição Final
-                logs.Add("[ETAPA 5] Mesclando elementos: Imagem + Texto OCR + Formulários Originais...");
-                MergeOcrPdfWithOriginalForm(jobDir, inputPdf, outputPdf, imagesDir, logs);
+                AddLog("[ETAPA 5] Mesclando elementos: Imagem + Texto OCR + Formulários Originais...");
+                MergeOcrPdfWithOriginalForm(jobDir, inputPdf, outputPdf, imagesDir, AddLog, onProgress);
                 DebugCopy(outputPdf, debugJobDir, "05_output_final");
 
                 // Se falhar em debug, os arquivos acima estarão no jobDir para inspeção
-                logs.Add("[SUCESSO] Pipeline finalizado com êxito.");
+                AddLog("[SUCESSO] Pipeline finalizado com êxito.");
+                ReportProgress("completed", "Concluído. Seu PDF está pronto para download.", percent: 100, totalPages: imageCount, processedPages: imageCount);
                 return new PipelineResult(true, outputPdf, logs, "");
             }
             catch (Exception ex)
             {
                 logs.Add($"[FALHA CRÍTICA] Erro: {ex.Message}");
+                onLog?.Invoke($"[FALHA CRÍTICA] Erro: {ex.Message}");
+                onProgress?.Invoke(new pdf_ocr.Models.JobProgressInfo
+                {
+                    Stage = "failed",
+                    Message = "Falha no processamento.",
+                    Percent = 0
+                });
                 // Em modo Debug, não deletamos os arquivos temporários em caso de erro
                 return new PipelineResult(false, "", logs, ex.Message);
             }
@@ -182,7 +222,11 @@ namespace pdf_ocr
         // =========================================================================
         // ETAPA 3: Renderizar PDF para JPEG (Otimizado para PDF.js)
         // =========================================================================
-        private static int RenderPdfToImages(string inputPdf, string imagesDir, List<string> logs)
+        private static int RenderPdfToImages(
+            string inputPdf,
+            string imagesDir,
+            Action<string> addLog,
+            Action<pdf_ocr.Models.JobProgressInfo>? onProgress)
         {
             if (OperatingSystem.IsLinux()) fpdfview.FPDF_InitLibrary();
 
@@ -204,8 +248,49 @@ namespace pdf_ocr
                 MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount / 2)
             };
 
+            int completed = 0;
+            var activePages = new System.Collections.Concurrent.ConcurrentDictionary<int, byte>();
+            var lastReport = 0L;
+            var reportLock = new object();
+
+            void Report(string message)
+            {
+                // Throttle progress reporting to avoid spamming the status endpoint.
+                var now = Stopwatch.GetTimestamp();
+                bool shouldReport;
+                lock (reportLock)
+                {
+                    var elapsedMs = (now - lastReport) * 1000.0 / Stopwatch.Frequency;
+                    shouldReport = elapsedMs >= 250;
+                    if (shouldReport) lastReport = now;
+                }
+
+                if (!shouldReport && completed < pageCount) return;
+
+                var active = activePages.Keys.OrderBy(x => x).Take(8).ToList();
+                var percent = pageCount > 0
+                    ? 15 + (int)Math.Round((completed / (double)pageCount) * 30)
+                    : 25;
+
+                onProgress?.Invoke(new pdf_ocr.Models.JobProgressInfo
+                {
+                    Stage = "render",
+                    Message = message,
+                    TotalPages = pageCount,
+                    ProcessedPages = completed,
+                    ActivePages = active,
+                    Percent = Math.Min(45, Math.Max(15, percent))
+                });
+            }
+
+            Report("Renderizando páginas para imagem...");
+
             Parallel.For(0, pageCount, parallelOptions, i =>
             {
+                int pageNumber = i + 1;
+                activePages.TryAdd(pageNumber, 0);
+                Report($"Renderizando páginas... ({completed}/{pageCount})");
+
                 // Each thread must load its own instance of the document/page 
                 // to ensure thread safety within PDFium
                 using var threadDoc = DtronixPdf.PdfDocument.Load(inputPdf, null);
@@ -216,9 +301,23 @@ namespace pdf_ocr
 
                 // Save using SkiaSharp (Same logic as before, but executing in parallel)
                 SavePdfBitmapAsJpeg(bmp, outputPath, 95);
+
+                activePages.TryRemove(pageNumber, out _);
+                System.Threading.Interlocked.Increment(ref completed);
+                Report($"Renderizando páginas... ({completed}/{pageCount})");
             });
 
-            logs.Add($"[RENDER] {pageCount} páginas renderizadas em paralelo a 300 DPI.");
+            addLog($"[RENDER] {pageCount} páginas renderizadas em paralelo a 300 DPI.");
+
+            onProgress?.Invoke(new pdf_ocr.Models.JobProgressInfo
+            {
+                Stage = "render",
+                Message = "Renderização concluída.",
+                TotalPages = pageCount,
+                ProcessedPages = pageCount,
+                ActivePages = new List<int>(),
+                Percent = 45
+            });
             return pageCount;
         }
 
@@ -299,7 +398,11 @@ namespace pdf_ocr
 
             return baseLangs;
         }
-        private static void RunTesseractParallel(string imagesDir, string workDir, List<string> logs)
+        private static void RunTesseractParallel(
+            string imagesDir,
+            string workDir,
+            Action<string> addLog,
+            Action<pdf_ocr.Models.JobProgressInfo>? onProgress)
         {
             var images = Directory.GetFiles(imagesDir, "page_*.jpg");
             Array.Sort(images);
@@ -309,26 +412,89 @@ namespace pdf_ocr
 
             // Detect language once using the first page to avoid redundant OSD overhead
             string detectedLangs = images.Length > 0 ? DetectBestLanguages(images[0]) : "por+eng";
-            logs.Add($"[OCR] Idioma detectado: {detectedLangs}. Iniciando processamento paralelo...");
+            addLog($"[OCR] Idioma detectado: {detectedLangs}. Iniciando processamento paralelo...");
+
+            int totalPages = images.Length;
+            int completed = 0;
+            var activePages = new System.Collections.Concurrent.ConcurrentDictionary<int, byte>();
+            var lastReport = 0L;
+            var reportLock = new object();
+
+            void Report(string message)
+            {
+                // Throttle progress reporting to avoid spamming the status endpoint.
+                var now = Stopwatch.GetTimestamp();
+                bool shouldReport;
+                lock (reportLock)
+                {
+                    var elapsedMs = (now - lastReport) * 1000.0 / Stopwatch.Frequency;
+                    shouldReport = elapsedMs >= 250;
+                    if (shouldReport) lastReport = now;
+                }
+
+                if (!shouldReport && completed < totalPages) return;
+
+                var active = activePages.Keys.OrderBy(x => x).Take(8).ToList();
+                var percent = totalPages > 0
+                    ? 45 + (int)Math.Round((completed / (double)totalPages) * 40)
+                    : 60;
+
+                onProgress?.Invoke(new pdf_ocr.Models.JobProgressInfo
+                {
+                    Stage = "ocr",
+                    Message = message,
+                    TotalPages = totalPages,
+                    ProcessedPages = completed,
+                    ActivePages = active,
+                    Percent = Math.Min(85, Math.Max(45, percent))
+                });
+            }
+
+            Report("Iniciando OCR (Tesseract)...");
 
             // Parallelize across CPU cores. 
             // MaxDegreeOfParallelism should be roughly your CPU core count.
             Parallel.ForEach(images, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount }, imagePath =>
             {
                 string pageNum = Path.GetFileNameWithoutExtension(imagePath).Replace("page_", "");
+                int pageIndex = 0;
+                int.TryParse(pageNum, out pageIndex);
+                if (pageIndex > 0) activePages.TryAdd(pageIndex, 0);
+
+                Report($"OCR em andamento... ({completed}/{totalPages})");
                 string outBase = Path.Combine(ocrPagesDir, $"ocr_page_{pageNum}");
 
                 // Optimized arguments: textonly_pdf=1 is essential for speed/size
                 string args = $"\"{imagePath}\" \"{outBase}\" -l {detectedLangs} --psm 1 -c textonly_pdf=1 -c dpi=300 pdf";
 
                 RunProcess("tesseract", args, $"Tesseract Page {pageNum}");
+
+                if (pageIndex > 0) activePages.TryRemove(pageIndex, out _);
+                System.Threading.Interlocked.Increment(ref completed);
+                Report($"OCR em andamento... ({completed}/{totalPages})");
+            });
+
+            onProgress?.Invoke(new pdf_ocr.Models.JobProgressInfo
+            {
+                Stage = "ocr",
+                Message = "OCR concluído.",
+                TotalPages = totalPages,
+                ProcessedPages = totalPages,
+                ActivePages = new List<int>(),
+                Percent = 85
             });
         }
 
         // =========================================================================
         // ETAPA 5: Mesclagem Robusta (Injeta imagem JPG como fundo)
         // =========================================================================
-        private static void MergeOcrPdfWithOriginalForm(string jobDir, string originalPdf, string outputPdf, string imagesDir, List<string> logs)
+        private static void MergeOcrPdfWithOriginalForm(
+            string jobDir,
+            string originalPdf,
+            string outputPdf,
+            string imagesDir,
+            Action<string> addLog,
+            Action<pdf_ocr.Models.JobProgressInfo>? onProgress)
         {
             string ocrPagesDir = Path.Combine(jobDir, "ocr_debug_temp");
             using var srcOriginal = new iText.Kernel.Pdf.PdfDocument(new PdfReader(originalPdf));
@@ -340,8 +506,20 @@ namespace pdf_ocr
             var formCopier = new PdfPageFormCopier();
             int pageCount = srcOriginal.GetNumberOfPages();
 
+            addLog($"[MERGE] Mesclando {pageCount} página(s)...");
+
             for (int i = 1; i <= pageCount; i++)
             {
+                onProgress?.Invoke(new pdf_ocr.Models.JobProgressInfo
+                {
+                    Stage = "merge",
+                    Message = $"Mesclando página {i} de {pageCount}...",
+                    TotalPages = pageCount,
+                    ProcessedPages = i,
+                    ActivePages = new List<int> { i },
+                    Percent = 85 + (int)Math.Round((i / (double)pageCount) * 13)
+                });
+
                 var destPage = srcOriginal.GetPage(i).CopyTo(dest, formCopier);
                 dest.AddPage(destPage);
 

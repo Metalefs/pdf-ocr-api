@@ -18,6 +18,8 @@ namespace pdf_ocr.Services
         Task<int> GetTotalJobsAsync(string? status);
         Task<bool> UpdateJobStatusAsync(string jobId, string status, string? outputPath = null,
             List<string>? logs = null, string? error = null);
+        Task<bool> AppendJobLogAsync(string jobId, string logLine);
+        Task<bool> UpdateJobProgressAsync(string jobId, JobProgressInfo progress);
         Task<bool> CancelJobAsync(string jobId);
         Task<int> CleanupOldJobsAsync(int hoursOld);
         Task<JobStatsResponse> GetStatsAsync();
@@ -79,7 +81,15 @@ namespace pdf_ocr.Services
                     FileName = file.FileName,
                     FileSize = file.Length,
                     CreatedAt = DateTime.UtcNow,
-                    Logs = new List<string> { $"[{DateTime.UtcNow:HH:mm:ss}] Job criado" }
+                    Logs = new List<string> { $"[{DateTime.UtcNow:HH:mm:ss}] Job criado" },
+                    ProgressPercent = 0,
+                    ProgressInfo = new JobProgressInfo
+                    {
+                        Stage = "queued",
+                        Message = "Job criado. Aguardando processamento...",
+                        Percent = 0,
+                        UpdatedAt = DateTime.UtcNow
+                    }
                 };
 
                 _jobs[jobId] = jobInfo;
@@ -122,25 +132,132 @@ namespace pdf_ocr.Services
                 // Atualizar status
                 await UpdateJobStatusAsync(jobId, "processing");
 
+                await UpdateJobProgressAsync(jobId, new JobProgressInfo
+                {
+                    Stage = "starting",
+                    Message = "Iniciando processamento...",
+                    Percent = 1,
+                    UpdatedAt = DateTime.UtcNow
+                });
+
                 // Executar pipeline
-                var result = await Task.Run(() => OcrPipelineService.Run(jobDir));
+                var result = await Task.Run(() => OcrPipelineService.Run(
+                    jobDir,
+                    onLog: line => _ = AppendJobLogAsync(jobId, line),
+                    onProgress: p => _ = UpdateJobProgressAsync(jobId, p)
+                ));
 
                 if (result.Success)
                 {
                     _logger.LogInformation("Job concluído com sucesso: {JobId}", jobId);
                     await UpdateJobStatusAsync(jobId, "completed", result.OutputPdf, result.Logs);
+
+                    await UpdateJobProgressAsync(jobId, new JobProgressInfo
+                    {
+                        Stage = "completed",
+                        Message = "Concluído. Seu PDF está pronto para download.",
+                        Percent = 100,
+                        UpdatedAt = DateTime.UtcNow
+                    });
                 }
                 else
                 {
                     _logger.LogError("Job falhou: {JobId}, Erro: {Error}", jobId, result.Error);
                     await UpdateJobStatusAsync(jobId, "failed", null, result.Logs, result.Error);
+
+                    await UpdateJobProgressAsync(jobId, new JobProgressInfo
+                    {
+                        Stage = "failed",
+                        Message = "Falha no processamento.",
+                        Percent = 0,
+                        UpdatedAt = DateTime.UtcNow
+                    });
                 }
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Exceção durante processamento do job: {JobId}", jobId);
                 await UpdateJobStatusAsync(jobId, "failed", null, null, ex.Message);
+
+                await UpdateJobProgressAsync(jobId, new JobProgressInfo
+                {
+                    Stage = "failed",
+                    Message = "Falha no processamento.",
+                    Percent = 0,
+                    UpdatedAt = DateTime.UtcNow
+                });
             }
+        }
+
+        public Task<bool> AppendJobLogAsync(string jobId, string logLine)
+        {
+            if (string.IsNullOrWhiteSpace(logLine))
+            {
+                return Task.FromResult(false);
+            }
+
+            if (!_jobs.TryGetValue(jobId, out var job))
+            {
+                return Task.FromResult(false);
+            }
+
+            var newLogs = new List<string>(job.Logs);
+            newLogs.Add(logLine);
+
+            // Avoid unbounded growth for long jobs
+            const int maxLogs = 500;
+            if (newLogs.Count > maxLogs)
+            {
+                newLogs = newLogs.Skip(Math.Max(0, newLogs.Count - maxLogs)).ToList();
+            }
+
+            var updatedJob = new JobInfo
+            {
+                Id = job.Id,
+                Status = job.Status,
+                FileName = job.FileName,
+                FileSize = job.FileSize,
+                CreatedAt = job.CreatedAt,
+                CompletedAt = job.CompletedAt,
+                OutputPath = job.OutputPath,
+                Error = job.Error,
+                Logs = newLogs,
+                ProgressPercent = job.ProgressPercent,
+                ProgressInfo = job.ProgressInfo
+            };
+
+            _jobs[jobId] = updatedJob;
+            return Task.FromResult(true);
+        }
+
+        public Task<bool> UpdateJobProgressAsync(string jobId, JobProgressInfo progress)
+        {
+            if (!_jobs.TryGetValue(jobId, out var job))
+            {
+                return Task.FromResult(false);
+            }
+
+            progress.UpdatedAt = DateTime.UtcNow;
+
+            var percent = progress.Percent ?? job.ProgressPercent;
+
+            var updatedJob = new JobInfo
+            {
+                Id = job.Id,
+                Status = job.Status,
+                FileName = job.FileName,
+                FileSize = job.FileSize,
+                CreatedAt = job.CreatedAt,
+                CompletedAt = job.CompletedAt,
+                OutputPath = job.OutputPath,
+                Logs = job.Logs,
+                Error = job.Error,
+                ProgressPercent = percent,
+                ProgressInfo = progress
+            };
+
+            _jobs[jobId] = updatedJob;
+            return Task.FromResult(true);
         }
 
         /// <summary>
@@ -213,7 +330,9 @@ namespace pdf_ocr.Services
                     : job.CompletedAt,
                 OutputPath = outputPath ?? job.OutputPath,
                 Logs = logs ?? job.Logs,
-                Error = error ?? job.Error
+                Error = error ?? job.Error,
+                ProgressPercent = job.ProgressPercent,
+                ProgressInfo = job.ProgressInfo
             };
 
             _jobs[jobId] = updatedJob;

@@ -20,6 +20,22 @@ namespace pdf_ocr.Models
         public List<string> Logs { get; set; } = new();
         public string Error { get; set; } = string.Empty;
         public string OutputPath { get; set; } = string.Empty;
+        public int ProgressPercent { get; set; }
+        public JobProgressInfo? ProgressInfo { get; set; }
+    }
+
+    /// <summary>
+    /// Progresso detalhado e amigável do job
+    /// </summary>
+    public class JobProgressInfo
+    {
+        public string Stage { get; set; } = string.Empty;
+        public string Message { get; set; } = string.Empty;
+        public int? TotalPages { get; set; }
+        public int? ProcessedPages { get; set; }
+        public List<int>? ActivePages { get; set; }
+        public int? Percent { get; set; }
+        public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     }
 
     // ========================================
@@ -69,6 +85,11 @@ namespace pdf_ocr.Models
         public string? DownloadUrl { get; set; }
         public int Progress { get; set; }
         public string? EstimatedTimeRemaining { get; set; }
+        public string? Message { get; set; }
+        public string? Stage { get; set; }
+        public int? TotalPages { get; set; }
+        public int? ProcessedPages { get; set; }
+        public List<int>? ActivePages { get; set; }
     }
 
     /// <summary>

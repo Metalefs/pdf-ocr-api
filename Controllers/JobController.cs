@@ -58,7 +58,12 @@ namespace pdf_ocr.Controllers
                 Logs = job.Logs,
                 Error = job.Error,
                 DownloadUrl = job.Status == "completed" ? $"/api/jobs/{jobId}/download" : null,
-                Progress = CalculateProgress(job.Status)
+                Progress = job.ProgressPercent > 0 ? job.ProgressPercent : CalculateProgress(job.Status),
+                Message = job.ProgressInfo?.Message,
+                Stage = job.ProgressInfo?.Stage,
+                TotalPages = job.ProgressInfo?.TotalPages,
+                ProcessedPages = job.ProgressInfo?.ProcessedPages,
+                ActivePages = job.ProgressInfo?.ActivePages
             };
 
             return Ok(response);
