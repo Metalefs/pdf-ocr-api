@@ -100,7 +100,7 @@ git push -u origin main
 6. **Testar API online:**
 ```bash
 curl https://sua-url.railway.app/
-# Deve retornar: {"status":"online","service":"PDF OCR API"...}
+# Deve retornar: {"status":"online","service":"TextLayer OCR API"...}
 ```
 
 ### ✅ CHECKLIST DIA 1

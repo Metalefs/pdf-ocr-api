@@ -57,9 +57,9 @@ namespace pdf_ocr.Controllers
                 {
                     Id = "pro",
                     Name = "Pro",
-                    Price = 19,
+                    Price = 9.99f,
                     Credits = 100,
-                    PriceId = "price_1SoLFZFKr62FCO6S5CiQOHbH", // Criar no Stripe Dashboard
+                    PriceId = "price_1SotFcFKr62FCO6Sn4ZgcBxA", // Criar no Stripe Dashboard
                     Features = new[]
                     {
                         "100 créditos/mês",
@@ -72,12 +72,12 @@ namespace pdf_ocr.Controllers
                 {
                     Id = "business",
                     Name = "Business",
-                    Price = 49,
+                    Price = 19.99f,
                     Credits = 500,
-                    PriceId = "price_1SoLGGFKr62FCO6Sw7RQ3h1C",
+                    PriceId = "price_1SotJcFKr62FCO6SWNuekEhb",
                     Features = new[]
                     {
-                        "500 créditos/mês",
+                        "créditos ilimitados",
                         "PDFs ilimitados",
                         "API access",
                         "Suporte dedicado"

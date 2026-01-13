@@ -149,7 +149,7 @@ namespace pdf_ocr.Models
     public class HealthResponse
     {
         public string Status { get; set; } = "online";
-        public string Service { get; set; } = "PDF OCR API";
+        public string Service { get; set; } = "TextLayer OCR API";
         public string Version { get; set; } = "1.0.0";
         public DateTime Timestamp { get; set; } = DateTime.UtcNow;
         public List<string> Features { get; set; } = new();

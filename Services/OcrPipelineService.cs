@@ -114,7 +114,7 @@ namespace pdf_ocr
 
                 // ETAPA 4: OCR
                 logs.Add("[ETAPA 4] Tesseract: Gerando camada de texto invisível...");
-                RunTesseractPerPage(imagesDir, jobDir, tesseractOcr, logs);
+                RunTesseractParallel(imagesDir, jobDir, logs);
                 DebugCopy(tesseractOcr, debugJobDir, "04_tesseract_text_layer");
                 DebugCopyDir(
                     Path.Combine(jobDir, "ocr_debug_temp"),
@@ -123,7 +123,7 @@ namespace pdf_ocr
                 );
                 // ETAPA 5: Recomposição Final
                 logs.Add("[ETAPA 5] Mesclando elementos: Imagem + Texto OCR + Formulários Originais...");
-                MergeOcrPdfWithOriginalForm(tesseractOcr, inputPdf, outputPdf, imagesDir, logs);
+                MergeOcrPdfWithOriginalForm(jobDir, inputPdf, outputPdf, imagesDir, logs);
                 DebugCopy(outputPdf, debugJobDir, "05_output_final");
 
                 // Se falhar em debug, os arquivos acima estarão no jobDir para inspeção
@@ -184,32 +184,42 @@ namespace pdf_ocr
         // =========================================================================
         private static int RenderPdfToImages(string inputPdf, string imagesDir, List<string> logs)
         {
-            // Garante que o PDFium conheça as fontes do Linux antes de carregar o PDF
             if (OperatingSystem.IsLinux()) fpdfview.FPDF_InitLibrary();
 
-            using var document = DtronixPdf.PdfDocument.Load(inputPdf, null);
+            // We load a temporary document to get the page count
+            int pageCount;
+            using (var doc = DtronixPdf.PdfDocument.Load(inputPdf, null))
+            {
+                pageCount = doc.Pages;
+            }
 
-            // Adobe Reader High Quality Heuristic: 300 DPI para texto pequeno
-            const int TARGET_DPI = 300;
+            // Adobe Reader High Quality Heuristic: 200 DPI
+            const int TARGET_DPI = 250;
             float scale = TARGET_DPI / 72f;
 
-            for (int i = 0; i < document.Pages; i++)
+            // Use Parallel.For to render pages across all CPU cores
+            // We limit MaxDegreeOfParallelism slightly to prevent RAM exhaustion from large bitmaps
+            var parallelOptions = new ParallelOptions
             {
-                using var page = document.GetPage(i);
+                MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount / 2)
+            };
 
-                // Aumentar o scale é a única forma de forçar nitidez no DtronixPdf
-                // sem acessar o ponteiro nativo da página
+            Parallel.For(0, pageCount, parallelOptions, i =>
+            {
+                // Each thread must load its own instance of the document/page 
+                // to ensure thread safety within PDFium
+                using var threadDoc = DtronixPdf.PdfDocument.Load(inputPdf, null);
+                using var page = threadDoc.GetPage(i);
                 using var bmp = page.Render(scale);
 
                 string outputPath = Path.Combine(imagesDir, $"page_{i + 1:000}.jpg");
 
-                // O método de salvamento SkiaSharp cuidará do fundo branco e compressão
+                // Save using SkiaSharp (Same logic as before, but executing in parallel)
                 SavePdfBitmapAsJpeg(bmp, outputPath, 95);
+            });
 
-                logs.Add($"[RENDER] Página {i + 1} processada (Heurística de 300 DPI aplicada).");
-            }
-
-            return Directory.GetFiles(imagesDir, "*.jpg").Length;
+            logs.Add($"[RENDER] {pageCount} páginas renderizadas em paralelo a 300 DPI.");
+            return pageCount;
         }
 
         private static void SavePdfBitmapAsJpeg(DtronixPdf.PdfBitmap bmp, string outputPath, int quality)
@@ -289,63 +299,59 @@ namespace pdf_ocr
 
             return baseLangs;
         }
-        private static void RunTesseractPerPage(string imagesDir, string workDir, string outputPdf, List<string> logs)
+        private static void RunTesseractParallel(string imagesDir, string workDir, List<string> logs)
         {
-            // Pega a primeira página para detectar o idioma predominante do lote
-            var firstImage = Directory.GetFiles(imagesDir, "page_001.jpg").FirstOrDefault();
-            string detectedLangs = firstImage != null ? DetectBestLanguages(firstImage) : "por+eng";
-
-            logs.Add($"[OCR] Idiomas selecionados para este documento: {detectedLangs}");
+            var images = Directory.GetFiles(imagesDir, "page_*.jpg");
+            Array.Sort(images);
 
             string ocrPagesDir = Path.Combine(workDir, "ocr_debug_temp");
             Directory.CreateDirectory(ocrPagesDir);
 
-            var images = Directory.GetFiles(imagesDir, "page_*.jpg");
-            Array.Sort(images);
+            // Detect language once using the first page to avoid redundant OSD overhead
+            string detectedLangs = images.Length > 0 ? DetectBestLanguages(images[0]) : "por+eng";
+            logs.Add($"[OCR] Idioma detectado: {detectedLangs}. Iniciando processamento paralelo...");
 
-            string manifestPath = Path.Combine(ocrPagesDir, "input_list.txt");
-            File.WriteAllLines(manifestPath, images);
+            // Parallelize across CPU cores. 
+            // MaxDegreeOfParallelism should be roughly your CPU core count.
+            Parallel.ForEach(images, new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount }, imagePath =>
+            {
+                string pageNum = Path.GetFileNameWithoutExtension(imagePath).Replace("page_", "");
+                string outBase = Path.Combine(ocrPagesDir, $"ocr_page_{pageNum}");
 
-            string outBase = Path.Combine(ocrPagesDir, "ocr_result");
+                // Optimized arguments: textonly_pdf=1 is essential for speed/size
+                string args = $"\"{imagePath}\" \"{outBase}\" -l {detectedLangs} --psm 1 -c textonly_pdf=1 -c dpi=300 pdf";
 
-            // PSM 1 é ideal aqui pois lida com documentos multilingues e orientação
-            string args = $"\"{manifestPath}\" \"{outBase}\" -l {detectedLangs} --psm 1 -c textonly_pdf=1 -c dpi=300 pdf";
-
-            logs.Add($"[OCR GLOBAL] Iniciando processamento multilingue (PT/EN/AR/ZH/JP/KO).");
-            RunProcess("tesseract", args, "Tesseract Global");
-
-            string resultFile = outBase + ".pdf";
-            if (File.Exists(outputPdf)) File.Delete(outputPdf);
-            File.Move(resultFile, outputPdf);
+                RunProcess("tesseract", args, $"Tesseract Page {pageNum}");
+            });
         }
 
         // =========================================================================
         // ETAPA 5: Mesclagem Robusta (Injeta imagem JPG como fundo)
         // =========================================================================
-        private static void MergeOcrPdfWithOriginalForm(string ocrPdf, string originalPdf, string outputPdf, string imagesDir, List<string> logs)
+        private static void MergeOcrPdfWithOriginalForm(string jobDir, string originalPdf, string outputPdf, string imagesDir, List<string> logs)
         {
+            string ocrPagesDir = Path.Combine(jobDir, "ocr_debug_temp");
             using var srcOriginal = new iText.Kernel.Pdf.PdfDocument(new PdfReader(originalPdf));
-            using var srcOcr = new iText.Kernel.Pdf.PdfDocument(new PdfReader(ocrPdf));
 
             var writerProps = new WriterProperties().SetFullCompressionMode(true).SetCompressionLevel(9);
             using var writer = new PdfWriter(outputPdf, writerProps);
             using var dest = new iText.Kernel.Pdf.PdfDocument(writer);
 
             var formCopier = new PdfPageFormCopier();
-            int pageCount = Math.Min(srcOriginal.GetNumberOfPages(), srcOcr.GetNumberOfPages());
+            int pageCount = srcOriginal.GetNumberOfPages();
 
             for (int i = 1; i <= pageCount; i++)
             {
                 var destPage = srcOriginal.GetPage(i).CopyTo(dest, formCopier);
                 dest.AddPage(destPage);
 
-                // Limpa o conteúdo "sujo" original preservando o formulário
+                // Clear vector content
                 destPage.GetPdfObject().Put(PdfName.Contents, new iText.Kernel.Pdf.PdfArray());
 
                 var canvas = new PdfCanvas(destPage);
                 var rect = destPage.GetMediaBox();
 
-                // Fundo: Imagem processada
+                // Background: Image
                 string imgPath = Path.Combine(imagesDir, $"page_{i:000}.jpg");
                 if (File.Exists(imgPath))
                 {
@@ -353,12 +359,15 @@ namespace pdf_ocr
                     canvas.AddImageFittedIntoRectangle(imgData, rect, false);
                 }
 
-                // Sobreposição: Camada de texto do OCR
-                var ocrPage = srcOcr.GetPage(i);
-                var ocrXObject = ocrPage.CopyAsFormXObject(dest);
-                canvas.AddXObjectFittedIntoRectangle(ocrXObject, rect);
-
-                if (IsDebug && i == 1) logs.Add("    > Camadas mescladas na página 1.");
+                // Overlay: Individual Page OCR Layer
+                string ocrPagePath = Path.Combine(ocrPagesDir, $"ocr_page_{i:000}.pdf");
+                if (File.Exists(ocrPagePath))
+                {
+                    using var ocrSubDoc = new iText.Kernel.Pdf.PdfDocument(new PdfReader(ocrPagePath));
+                    var ocrPage = ocrSubDoc.GetPage(1);
+                    var ocrXObject = ocrPage.CopyAsFormXObject(dest);
+                    canvas.AddXObjectFittedIntoRectangle(ocrXObject, rect);
+                }
             }
         }
 

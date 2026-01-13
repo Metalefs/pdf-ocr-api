@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using pdf_ocr.Models;
 using pdf_ocr.Services;
 using System.Security.Claims;
+using StackExchange.Redis;
 
 namespace pdf_ocr.Controllers
 {
@@ -109,6 +110,7 @@ namespace pdf_ocr.Controllers
         public async Task<IActionResult> ProcessDemo([FromForm] PdfUploadRequest request)
         {
             var file = request.File;
+
             // Limites para demo
             if (file.Length > 1_000_000) // 1MB
                 return BadRequest(new
@@ -116,6 +118,44 @@ namespace pdf_ocr.Controllers
                     error = "Demo limitado a 1MB",
                     message = "Crie uma conta gratuita para processar PDFs maiores"
                 });
+
+            // Rate-limit por IP: até 3 chamadas por período (24h)
+            string ip = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+            try
+            {
+                var multiplexer = HttpContext.RequestServices.GetService(typeof(IConnectionMultiplexer)) as IConnectionMultiplexer;
+                if (multiplexer != null)
+                {
+                    var db = multiplexer.GetDatabase();
+                    var key = $"demo_count:{ip}";
+                    // Incrementa e retorna novo contador
+                    var count = (long)await db.StringIncrementAsync(key).ConfigureAwait(false);
+                    if (count == 1)
+                    {
+                        // Expira em 24h
+                        await db.KeyExpireAsync(key, TimeSpan.FromHours(24)).ConfigureAwait(false);
+                    }
+
+                    if (count > 3)
+                    {
+                        _logger.LogWarning("IP {Ip} excedeu limite demo: {Count}", ip, count);
+                        return StatusCode(429, new
+                        {
+                            error = "Demo limit exceeded",
+                            details = "You have reached the demo limit. Create an account or purchase a plan to continue.",
+                            upgradeUrl = "/plans"
+                        });
+                    }
+                }
+                else
+                {
+                    _logger.LogDebug("Redis IConnectionMultiplexer não registrado — demo rate-limit não será aplicado");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Falha ao verificar contador demo no Redis — permitindo demo sem contagem");
+            }
 
             // Processar normalmente
             var jobId = await _jobService.CreateJobAsync(file);

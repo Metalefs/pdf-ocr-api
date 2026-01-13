@@ -1,7 +1,7 @@
 ﻿# ============================================
 # README.md
 # ============================================
-# 📄 OCR PDF Pro - SaaS
+# 📄 TextLayer OCR - SaaS
 
 Ferramenta profissional de OCR para PDFs que **preserva formulários e campos preenchíveis**.
 

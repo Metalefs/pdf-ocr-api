@@ -10,6 +10,7 @@ using Stripe;
 using Swashbuckle.AspNetCore.SwaggerGen;
 using System.Reflection;
 using System.Text;
+using StackExchange.Redis;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -62,9 +63,9 @@ builder.Services.AddSwaggerGen(options =>
 {
     options.SwaggerDoc("v1", new OpenApiInfo
     {
-        Title = "PDF OCR API",
+        Title = "TextLayer OCR API",
         Version = "v1.0",
-        Description = "SaaS de OCR para PDFs com preservaï¿½ï¿½o de formulï¿½rios"
+        Description = "API de OCR para PDFs com preservaï¿½ï¿½o de formulï¿½rios e campos preenchï¿½veis"
     });
     // Adicionar autenticaÃ§Ã£o JWT no Swagger
     options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
@@ -114,6 +115,19 @@ else
 // Registrar serviço de API Keys
 builder.Services.AddSingleton<IApiKeyService, ApiKeyService>();
 
+// Registrar Redis (StackExchange.Redis) para rate-limiting de demo
+try
+{
+    var redisConnection = builder.Configuration["Redis:Connection"] ?? "http://localhost:32768";
+    var multiplexer = StackExchange.Redis.ConnectionMultiplexer.Connect(redisConnection);
+    builder.Services.AddSingleton<StackExchange.Redis.IConnectionMultiplexer>(multiplexer);
+    Console.WriteLine($"✓ Redis conectado: {redisConnection}");
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"⚠ Redis não disponível (demo rate-limit desabilitado): {ex.Message}");
+}
+
 var supabaseUrl = builder.Configuration["Supabase:Url"]?.TrimEnd('/');
 var isDevelopment = builder.Environment.IsDevelopment();
 
@@ -162,9 +176,9 @@ var app = builder.Build();
 app.UseSwagger();
 app.UseSwaggerUI(options =>
 {
-    options.SwaggerEndpoint("/swagger/v1/swagger.json", "PDF OCR API v1");
+    options.SwaggerEndpoint("/swagger/v1/swagger.json", "TextLayer OCR API v1");
     options.RoutePrefix = "swagger";
-    options.DocumentTitle = "PDF OCR API - Documentação";
+    options.DocumentTitle = "TextLayer OCR API - Documentação";
 });
 
 // CORS - Use AllowFrontend policy for OAuth callback and API requests
@@ -187,7 +201,7 @@ app.MapControllers();
 app.MapGet("/", () => new HealthResponse
 {
     Status = "online",
-    Service = "PDF OCR API",
+    Service = "TextLayer OCR API",
     Version = "1.0.0",
     Timestamp = DateTime.UtcNow,
     Features = new List<string>
@@ -218,7 +232,7 @@ var cleanupTimer = new System.Threading.Timer(async _ =>
 // Informaï¿½ï¿½es da API
 app.MapGet("/api/info", () => new
 {
-    service = "PDF OCR API",
+    service = "TextLayer OCR API",
     version = "1.0.0",
     description = "API REST para processamento de PDFs com OCR",
     documentation = "/swagger",
@@ -249,7 +263,7 @@ app.MapGet("/api/info", () => new
 // Log de inicializaï¿½ï¿½o
 var logger = app.Services.GetRequiredService<ILogger<Program>>();
 logger.LogInformation("=".PadRight(60, '='));
-logger.LogInformation("PDF OCR API - Iniciando");
+logger.LogInformation("TextLayer OCR API - Iniciando");
 logger.LogInformation("=".PadRight(60, '='));
 logger.LogInformation("Ambiente: {Environment}", app.Environment.EnvironmentName);
 logger.LogInformation("Swagger: /swagger");
