@@ -113,10 +113,11 @@ namespace pdf_ocr.Controllers
 
             // Limites para demo
             if (file.Length > 1_000_000) // 1MB
-                return BadRequest(new
+                return StatusCode(429, new
                 {
                     error = "Demo limitado a 1MB",
-                    message = "Crie uma conta gratuita para processar PDFs maiores"
+                    details = "Crie uma conta gratuita para processar PDFs maiores",
+                    upgradeUrl = "/plans"
                 });
 
             // Rate-limit por IP: até 3 chamadas por período (24h)
