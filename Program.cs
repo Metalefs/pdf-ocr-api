@@ -3,14 +3,16 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi;
+using pdf_ocr.BackgroundServices;
 using pdf_ocr.Middleware;
 using pdf_ocr.Models;
 using pdf_ocr.Services;
+using StackExchange.Redis;
 using Stripe;
+using Supabase;
 using Swashbuckle.AspNetCore.SwaggerGen;
 using System.Reflection;
 using System.Text;
-using StackExchange.Redis;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -47,11 +49,6 @@ builder.Services.AddCors(options =>
         policy.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader();
     });
 });
-
-// Add custom services
-builder.Services.AddSingleton<IJobService, JobService>();
-builder.Services.AddSingleton<IStripePlansService, StripePlansService>();
-// Add services to the container.
 
 builder.Services.AddControllers();
 
@@ -97,8 +94,37 @@ builder.Services.AddHealthChecks();
 // ============================================
 // SERVIÃ‡OS CUSTOMIZADOS
 // ============================================
+// ============================================
+// CONFIGURAÇÃO DO SUPABASE CLIENT
+// Adicionar ANTES do registro dos serviços
+// ============================================
 
-builder.Services.AddSingleton<IJobService, JobService>();
+
+// Configurar e registrar o Supabase Client como singleton
+
+var supabaseUrl = builder.Configuration["Supabase:Url"]?.TrimEnd('/');
+var supabaseKey = builder.Configuration["Supabase:AnonKey"]
+    ?? throw new InvalidOperationException("Supabase:AnonKey não configurado");
+
+var options = new SupabaseOptions
+{
+    AutoConnectRealtime = false, // Desabilitar realtime se não usar
+    AutoRefreshToken = true,
+    SessionHandler = new DefaultSupabaseSessionHandler()
+};
+
+// Criar e registrar client como singleton
+builder.Services.AddSingleton(provider =>
+{
+    var client = new Supabase.Client(supabaseUrl, supabaseKey, options);
+    // Inicializar o client de forma síncrona
+    client.InitializeAsync().GetAwaiter().GetResult();
+    return client;
+});
+builder.Services.AddSingleton<IStripePlansService, StripePlansService>();
+builder.Services.AddSingleton<IJobPersistenceService, SupabaseJobPersistenceService>();
+builder.Services.AddSingleton<IJobService, HybridJobService>();
+builder.Services.AddHostedService<JobRecoveryService>();
 if (builder.Environment.IsDevelopment())
 {
     //builder.Services.AddSingleton<IUserService, UserService>();
@@ -129,7 +155,6 @@ catch (Exception ex)
     Console.WriteLine($"⚠ Redis não disponível (demo rate-limit desabilitado): {ex.Message}");
 }
 
-var supabaseUrl = builder.Configuration["Supabase:Url"]?.TrimEnd('/');
 var isDevelopment = builder.Environment.IsDevelopment();
 
 builder.Services
@@ -187,6 +212,9 @@ app.UseCors("AllowFrontend");
 
 // Important: Correct order for routing/authentication/authorization middleware
 app.UseRouting();
+
+// Language negotiation for API responses (Accept-Language / X-Language)
+app.UseMiddleware<RequestLanguageMiddleware>();
 
 app.UseAuthentication(); // Tenta JWT primeiro, depois API Key
 app.UseAuthorization();
@@ -272,6 +300,21 @@ logger.LogInformation("=".PadRight(60, '='));
 
 app.Run();
 
+new System.Threading.Timer(async _ =>
+{
+    try
+    {
+        var jobService = app.Services.GetRequiredService<IJobService>();
+        var count = await jobService.CleanupOldJobsAsync(24);
+        var logger = app.Services.GetRequiredService<ILogger<Program>>();
+        logger.LogInformation("Cleanup automático: {Count} jobs removidos", count);
+    }
+    catch (Exception ex)
+    {
+        var logger = app.Services.GetRequiredService<ILogger<Program>>();
+        logger.LogError(ex, "Erro no cleanup automático de jobs");
+    }
+}, null, TimeSpan.Zero, TimeSpan.FromHours(6));
 // ========================================
 // HELPERS
 // ========================================

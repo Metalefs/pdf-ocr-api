@@ -1,6 +1,7 @@
 ﻿// Controllers/UsersController.cs
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using pdf_ocr.Models;
 using pdf_ocr.Services;
 using System.Security.Claims;
 
@@ -28,7 +29,12 @@ namespace pdf_ocr.Controllers
         {
             try
             {
-                var userId = GetUserId();
+                var userId = GetUserIdOrNull();
+                if (string.IsNullOrEmpty(userId))
+                {
+                    var unauth = ApiMessages.UserNotAuthenticated(HttpContext);
+                    return Unauthorized(new ErrorResponse { Error = unauth.Error, Details = unauth.Details });
+                }
                 var email = User.FindFirst(ClaimTypes.Email)?.Value ?? "";
                 var name = User.FindFirst(ClaimTypes.Name)?.Value ?? "";
 
@@ -36,7 +42,12 @@ namespace pdf_ocr.Controllers
 
                 if (user == null)
                 {
-                    return NotFound(new { error = "Usuário não encontrado" });
+                    var msg = ApiMessages.UserNotFound(HttpContext);
+                    return NotFound(new ErrorResponse
+                    {
+                        Error = msg.Error,
+                        Details = msg.Details
+                    });
                 }
 
                 return Ok(user);
@@ -44,7 +55,8 @@ namespace pdf_ocr.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Erro ao obter perfil do usuário");
-                return StatusCode(500, new { error = "Erro interno do servidor" });
+                var msg = ApiMessages.InternalServerError(HttpContext);
+                return StatusCode(500, new ErrorResponse { Error = msg.Error, Details = msg.Details });
             }
         }
 
@@ -56,7 +68,12 @@ namespace pdf_ocr.Controllers
         {
             try
             {
-                var userId = GetUserId();
+                var userId = GetUserIdOrNull();
+                if (string.IsNullOrEmpty(userId))
+                {
+                    var unauth = ApiMessages.UserNotAuthenticated(HttpContext);
+                    return Unauthorized(new ErrorResponse { Error = unauth.Error, Details = unauth.Details });
+                }
                 var email = User.FindFirst(ClaimTypes.Email)?.Value ?? "";
 
                 // Buscar usuário atual
@@ -64,7 +81,12 @@ namespace pdf_ocr.Controllers
 
                 if (user == null)
                 {
-                    return NotFound(new { error = "Usuário não encontrado" });
+                    var msg = ApiMessages.UserNotFound(HttpContext);
+                    return NotFound(new ErrorResponse
+                    {
+                        Error = msg.Error,
+                        Details = msg.Details
+                    });
                 }
 
                 // Retornar usuário atualizado
@@ -73,7 +95,8 @@ namespace pdf_ocr.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Erro ao atualizar perfil");
-                return StatusCode(500, new { error = "Erro ao atualizar perfil" });
+                var msg = ApiMessages.UpdateProfileFailed(HttpContext);
+                return StatusCode(500, new ErrorResponse { Error = msg.Error, Details = msg.Details });
             }
         }
 
@@ -85,7 +108,12 @@ namespace pdf_ocr.Controllers
         {
             try
             {
-                var userId = GetUserId();
+                var userId = GetUserIdOrNull();
+                if (string.IsNullOrEmpty(userId))
+                {
+                    var unauth = ApiMessages.UserNotAuthenticated(HttpContext);
+                    return Unauthorized(new ErrorResponse { Error = unauth.Error, Details = unauth.Details });
+                }
                 var credits = await _userService.GetCreditsAsync(userId);
                 var plan = await GetUserPlan(userId);
 
@@ -99,7 +127,8 @@ namespace pdf_ocr.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Erro ao obter créditos");
-                return StatusCode(500, new { error = "Erro ao obter créditos" });
+                var msg = ApiMessages.GetCreditsFailed(HttpContext);
+                return StatusCode(500, new ErrorResponse { Error = msg.Error, Details = msg.Details });
             }
         }
 
@@ -111,7 +140,12 @@ namespace pdf_ocr.Controllers
         {
             try
             {
-                var userId = GetUserId();
+                var userId = GetUserIdOrNull();
+                if (string.IsNullOrEmpty(userId))
+                {
+                    var unauth = ApiMessages.UserNotAuthenticated(HttpContext);
+                    return Unauthorized(new ErrorResponse { Error = unauth.Error, Details = unauth.Details });
+                }
                 var plan = await GetUserPlan(userId);
 
                 var usageStats = await _userService.GetUsageStatsAsync(userId);
@@ -139,14 +173,14 @@ namespace pdf_ocr.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Erro ao obter uso");
-                return StatusCode(500, new { error = "Erro ao obter uso" });
+                var msg = ApiMessages.GetUsageFailed(HttpContext);
+                return StatusCode(500, new ErrorResponse { Error = msg.Error, Details = msg.Details });
             }
         }
 
-        private string GetUserId()
+        private string? GetUserIdOrNull()
         {
-            return User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-                ?? throw new UnauthorizedAccessException("Usuário não autenticado");
+            return User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
         }
 
         private async Task<string> GetUserPlan(string userId)

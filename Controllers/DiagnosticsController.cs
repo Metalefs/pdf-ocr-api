@@ -1,4 +1,6 @@
 ﻿using Microsoft.AspNetCore.Mvc;
+using pdf_ocr.Models;
+using pdf_ocr.Services;
 using System.Diagnostics;
 
 namespace pdf_ocr.Controllers
@@ -40,7 +42,8 @@ namespace pdf_ocr.Controllers
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { Error = "Tesseract não encontrado ou falha no sistema nativo.", Details = ex.Message });
+                var msg = ApiMessages.TesseractUnavailable(HttpContext, ex.Message);
+                return StatusCode(500, new ErrorResponse { Error = msg.Error, Details = msg.Details });
             }
         }
     }

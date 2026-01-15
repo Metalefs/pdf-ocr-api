@@ -57,7 +57,12 @@ public class PaymentController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Erro ao buscar planos");
-            return StatusCode(500, new { error = "Erro ao buscar planos" });
+            var msg = ApiMessages.PlansFetchFailed(HttpContext);
+            return StatusCode(500, new pdf_ocr.Models.ErrorResponse
+            {
+                Error = msg.Error,
+                Details = msg.Details
+            });
         }
     }
 
@@ -76,20 +81,35 @@ public class PaymentController : ControllerBase
             // Validar request
             if (string.IsNullOrWhiteSpace(req.PriceId))
             {
-                return BadRequest(new { error = "PriceId é obrigatório" });
+                var msg = ApiMessages.PriceIdRequired(HttpContext);
+                return BadRequest(new pdf_ocr.Models.ErrorResponse
+                {
+                    Error = msg.Error,
+                    Details = msg.Details
+                });
             }
 
             // Obter usuário do token
             var userId = GetUserId();
             if (string.IsNullOrEmpty(userId))
             {
-                return Unauthorized(new { error = "Token inválido" });
+                var msg = ApiMessages.InvalidToken(HttpContext);
+                return Unauthorized(new pdf_ocr.Models.ErrorResponse
+                {
+                    Error = msg.Error,
+                    Details = msg.Details
+                });
             }
 
             var user = await _userService.GetUserAsync(userId);
             if (user == null)
             {
-                return NotFound(new { error = "Usuário não encontrado" });
+                var msg = ApiMessages.UserNotFound(HttpContext);
+                return NotFound(new pdf_ocr.Models.ErrorResponse
+                {
+                    Error = msg.Error,
+                    Details = msg.Details
+                });
             }
 
             // Determinar URLs baseado no ambiente
@@ -136,12 +156,22 @@ public class PaymentController : ControllerBase
         catch (StripeException ex)
         {
             _logger.LogError(ex, "Erro no Stripe: {Message}", ex.Message);
-            return BadRequest(new { error = ex.Message });
+            var msg = ApiMessages.StripeError(HttpContext, ex.Message);
+            return BadRequest(new pdf_ocr.Models.ErrorResponse
+            {
+                Error = msg.Error,
+                Details = msg.Details
+            });
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Erro ao criar checkout");
-            return StatusCode(500, new { error = "Erro ao criar checkout" });
+            var msg = ApiMessages.CheckoutCreateFailed(HttpContext);
+            return StatusCode(500, new pdf_ocr.Models.ErrorResponse
+            {
+                Error = msg.Error,
+                Details = msg.Details
+            });
         }
     }
 

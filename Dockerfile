@@ -29,7 +29,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libfontconfig1 libfreetype6 libicu-dev libharfbuzz0b libgdiplus \
     # Tesseract e Dicionários
     tesseract-ocr tesseract-ocr-por tesseract-ocr-eng tesseract-ocr-ara \
-    tesseract-ocr-chi-sim tesseract-ocr-jpn tesseract-ocr-kor tesseract-ocr-osd \
+    tesseract-ocr-chi-sim tesseract-ocr-jpn tesseract-ocr-kor tesseract-ocr-osd tesseract-ocr-rus\
     # Fontes e Utilidades
     ttf-mscorefonts-installer fonts-liberation fontconfig \
     curl wget ca-certificates \

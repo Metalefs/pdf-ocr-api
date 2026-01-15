@@ -40,7 +40,8 @@ namespace pdf_ocr.Controllers
             {
                 if (string.IsNullOrEmpty(request.AccessToken))
                 {
-                    return BadRequest(new { error = "AccessToken � obrigat�rio" });
+                    var msg = ApiMessages.AccessTokenRequired(HttpContext);
+                    return BadRequest(new ErrorResponse { Error = msg.Error, Details = msg.Details });
                 }
 
                 // Validar token JWT do Supabase
@@ -56,7 +57,8 @@ namespace pdf_ocr.Controllers
 
                 if (string.IsNullOrEmpty(userId) || string.IsNullOrEmpty(email))
                 {
-                    return BadRequest(new { error = "Token inv�lido" });
+                    var msg = ApiMessages.InvalidToken(HttpContext);
+                    return BadRequest(new ErrorResponse { Error = msg.Error, Details = msg.Details });
                 }
 
                 // Criar ou atualizar usu�rio no sistema
@@ -88,7 +90,8 @@ namespace pdf_ocr.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Erro ao sincronizar usu�rio");
-                return StatusCode(500, new { error = "Erro ao processar autentica��o" });
+                var msg = ApiMessages.AuthProcessingFailed(HttpContext);
+                return StatusCode(500, new ErrorResponse { Error = msg.Error, Details = msg.Details });
             }
         }
         /// <summary>
@@ -155,7 +158,8 @@ namespace pdf_ocr.Controllers
 
                 if (string.IsNullOrEmpty(userId))
                 {
-                    return Unauthorized(new { error = "Usu�rio n�o autenticado" });
+                    var msg = ApiMessages.UserNotAuthenticated(HttpContext);
+                    return Unauthorized(new ErrorResponse { Error = msg.Error, Details = msg.Details });
                 }
 
                 var email = User.FindFirst(ClaimTypes.Email)?.Value ?? "";
@@ -179,7 +183,8 @@ namespace pdf_ocr.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Erro ao obter dados do usu�rio");
-                return StatusCode(500, new { error = "Erro ao obter dados" });
+                var msg = ApiMessages.GetUserDataFailed(HttpContext);
+                return StatusCode(500, new ErrorResponse { Error = msg.Error, Details = msg.Details });
             }
         }
 

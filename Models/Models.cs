@@ -20,7 +20,10 @@ namespace pdf_ocr.Models
         public List<string> Logs { get; set; } = new();
         public string Error { get; set; } = string.Empty;
         public string OutputPath { get; set; } = string.Empty;
+        public string? ErrorMessage { get; set; }
         public int ProgressPercent { get; set; }
+        public string? JobId { get; set; }
+        public string? UserId { get; set; }
         public JobProgressInfo? ProgressInfo { get; set; }
     }
 
@@ -160,6 +163,7 @@ namespace pdf_ocr.Models
     {
         public string Error { get; set; } = string.Empty;
         public string Details { get; set; } = string.Empty;
+        public string? UpgradeUrl { get; set; }
         public List<string>? Logs { get; set; }
         public DateTime Timestamp { get; set; } = DateTime.UtcNow;
     }

@@ -36,11 +36,20 @@ namespace pdf_ocr.Controllers
         {
             try
             {
-                var userId = GetUserId();
+                var userId = GetUserIdOrNull();
+                if (string.IsNullOrEmpty(userId))
+                {
+                    return Unauthorized(UserNotAuthenticatedResponse());
+                }
 
                 if (string.IsNullOrWhiteSpace(request.Name))
                 {
-                    return BadRequest(new { error = "Nome da chave é obrigatório" });
+                    var msg = ApiMessages.ApiKeyNameRequired(HttpContext);
+                    return BadRequest(new ErrorResponse
+                    {
+                        Error = msg.Error,
+                        Details = msg.Details
+                    });
                 }
 
                 var apiKey = await _apiKeyService.CreateKeyAsync(userId, request);
@@ -54,7 +63,12 @@ namespace pdf_ocr.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Erro ao criar API Key");
-                return StatusCode(500, new { error = "Erro ao criar chave" });
+                var msg = ApiMessages.ApiKeysCreateFailed(HttpContext);
+                return StatusCode(500, new ErrorResponse
+                {
+                    Error = msg.Error,
+                    Details = msg.Details
+                });
             }
         }
 
@@ -67,7 +81,11 @@ namespace pdf_ocr.Controllers
         {
             try
             {
-                var userId = GetUserId();
+                var userId = GetUserIdOrNull();
+                if (string.IsNullOrEmpty(userId))
+                {
+                    return Unauthorized(UserNotAuthenticatedResponse());
+                }
                 var keys = await _apiKeyService.GetUserKeysAsync(userId);
 
                 return Ok(keys);
@@ -75,7 +93,12 @@ namespace pdf_ocr.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Erro ao listar chaves");
-                return StatusCode(500, new { error = "Erro ao listar chaves" });
+                var msg = ApiMessages.ApiKeysListFailed(HttpContext);
+                return StatusCode(500, new ErrorResponse
+                {
+                    Error = msg.Error,
+                    Details = msg.Details
+                });
             }
         }
 
@@ -89,12 +112,21 @@ namespace pdf_ocr.Controllers
         {
             try
             {
-                var userId = GetUserId();
+                var userId = GetUserIdOrNull();
+                if (string.IsNullOrEmpty(userId))
+                {
+                    return Unauthorized(UserNotAuthenticatedResponse());
+                }
                 var success = await _apiKeyService.RevokeKeyAsync(userId, keyId);
 
                 if (!success)
                 {
-                    return NotFound(new { error = "Chave não encontrada" });
+                    var msg = ApiMessages.ApiKeyNotFound(HttpContext);
+                    return NotFound(new ErrorResponse
+                    {
+                        Error = msg.Error,
+                        Details = msg.Details
+                    });
                 }
 
                 return NoContent();
@@ -102,7 +134,12 @@ namespace pdf_ocr.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Erro ao revogar chave: {KeyId}", keyId);
-                return StatusCode(500, new { error = "Erro ao revogar chave" });
+                var msg = ApiMessages.ApiKeyRevokeFailed(HttpContext);
+                return StatusCode(500, new ErrorResponse
+                {
+                    Error = msg.Error,
+                    Details = msg.Details
+                });
             }
         }
 
@@ -121,7 +158,12 @@ namespace pdf_ocr.Controllers
 
                 if (userId == null)
                 {
-                    return Unauthorized(new { error = "Chave inválida ou expirada" });
+                    var msg = ApiMessages.ApiKeyInvalidOrExpired(HttpContext);
+                    return Unauthorized(new ErrorResponse
+                    {
+                        Error = msg.Error,
+                        Details = msg.Details
+                    });
                 }
 
                 return Ok(new { valid = true, userId });
@@ -129,14 +171,24 @@ namespace pdf_ocr.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Erro ao validar chave");
-                return StatusCode(500, new { error = "Erro ao validar" });
+                var msg = ApiMessages.ApiKeyValidateFailed(HttpContext);
+                return StatusCode(500, new ErrorResponse
+                {
+                    Error = msg.Error,
+                    Details = msg.Details
+                });
             }
         }
 
-        private string GetUserId()
+        private string? GetUserIdOrNull()
         {
-            return User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-                ?? throw new UnauthorizedAccessException("Usuário não autenticado");
+            return User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+        }
+
+        private ErrorResponse UserNotAuthenticatedResponse()
+        {
+            var msg = ApiMessages.UserNotAuthenticated(HttpContext);
+            return new ErrorResponse { Error = msg.Error, Details = msg.Details };
         }
     }
 

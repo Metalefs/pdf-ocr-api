@@ -78,7 +78,7 @@ namespace pdf_ocr.Controllers
                 {
                     JobId = jobId,
                     Status = "queued",
-                    Message = "PDF recebido e aguardando processamento",
+                    Message = ApiMessages.PdfQueued(HttpContext),
                     StatusUrl = $"/api/jobs/{jobId}/status",
                     DownloadUrl = $"/api/jobs/{jobId}/download",
                     CreditsRemaining = await _userService.GetCreditsAsync(userId)
@@ -89,10 +89,11 @@ namespace pdf_ocr.Controllers
                 _logger.LogError(ex, "Erro ao criar job ass�ncrono");
                 // Devolver cr�dito em caso de erro
                 await _userService.AddCreditsAsync(GetUserId(), 1);
+                var msg = ApiMessages.CreateJobFailed(HttpContext, ex.Message);
                 return StatusCode(500, new ErrorResponse
                 {
-                    Error = "Erro ao criar job de processamento",
-                    Details = ex.Message
+                    Error = msg.Error,
+                    Details = msg.Details
                 });
             }
         }
@@ -113,12 +114,15 @@ namespace pdf_ocr.Controllers
 
             // Limites para demo
             if (file.Length > 1_000_000) // 1MB
-                return StatusCode(429, new
+            {
+                var msg = ApiMessages.DemoFileTooLarge(HttpContext);
+                return BadRequest(new ErrorResponse
                 {
-                    error = "Demo limitado a 1MB",
-                    details = "Crie uma conta gratuita para processar PDFs maiores",
-                    upgradeUrl = "/plans"
+                    Error = msg.Error,
+                    Details = msg.Details,
+                    UpgradeUrl = msg.UpgradeUrl
                 });
+            }
 
             // Rate-limit por IP: até 3 chamadas por período (24h)
             string ip = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
@@ -140,11 +144,12 @@ namespace pdf_ocr.Controllers
                     if (count > 3)
                     {
                         _logger.LogWarning("IP {Ip} excedeu limite demo: {Count}", ip, count);
-                        return StatusCode(429, new
+                        var msg = ApiMessages.DemoLimitExceeded(HttpContext);
+                        return StatusCode(429, new ErrorResponse
                         {
-                            error = "Demo limit exceeded",
-                            details = "You have reached the demo limit. Create an account or purchase a plan to continue.",
-                            upgradeUrl = "/plans"
+                            Error = msg.Error,
+                            Details = msg.Details,
+                            UpgradeUrl = msg.UpgradeUrl
                         });
                     }
                 }
@@ -161,15 +166,17 @@ namespace pdf_ocr.Controllers
             // Processar normalmente
             var jobId = await _jobService.CreateJobAsync(file);
 
+            var queued = ApiMessages.DemoQueued(HttpContext);
+
             return Ok(new ProcessResponse
             {
                 JobId = jobId,
                 Status = "queued",
-                Message = "Demo - Processamento iniciado",
+                Message = queued.Message,
                 StatusUrl = $"/api/jobs/{jobId}/status",
                 DownloadUrl = $"/api/jobs/{jobId}/download",
                 CreditsRemaining = 0,
-                UpgradeMessage = "Crie uma conta para mais recursos"
+                UpgradeMessage = queued.UpgradeMessage
             });
         }
 
@@ -237,10 +244,12 @@ namespace pdf_ocr.Controllers
                     // Limpar diret�rio tempor�rio
                     CleanupDirectory(jobDir);
 
+                    var msg = ApiMessages.OcrProcessingFailed(HttpContext, result.Error);
+
                     return StatusCode(500, new ErrorResponse
                     {
-                        Error = "Erro no processamento OCR",
-                        Details = result.Error,
+                        Error = msg.Error,
+                        Details = msg.Details,
                         Logs = result.Logs
                     });
                 }
@@ -264,10 +273,11 @@ namespace pdf_ocr.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Erro cr�tico no processamento s�ncrono");
+                var msg = ApiMessages.InternalServerError(HttpContext);
                 return StatusCode(500, new ErrorResponse
                 {
-                    Error = "Erro interno no servidor",
-                    Details = ex.Message
+                    Error = msg.Error,
+                    Details = msg.Details
                 });
             }
         }
@@ -291,30 +301,33 @@ namespace pdf_ocr.Controllers
             if (file == null || file.Length == 0)
             {
                 _logger.LogWarning("Nenhum arquivo foi enviado");
+                var msg = ApiMessages.NoFileProvided(HttpContext);
                 return BadRequest(new ErrorResponse
                 {
-                    Error = "Nenhum arquivo enviado",
-                    Details = "� necess�rio enviar um arquivo PDF"
+                    Error = msg.Error,
+                    Details = msg.Details
                 });
             }
 
             if (file.Length > 10_000_000) // 10MB
             {
                 _logger.LogWarning("Arquivo muito grande: {Size} bytes", file.Length);
+                var msg = ApiMessages.FileTooLarge(HttpContext, 10);
                 return BadRequest(new ErrorResponse
                 {
-                    Error = "Arquivo muito grande",
-                    Details = "O tamanho m�ximo permitido � 10MB"
+                    Error = msg.Error,
+                    Details = msg.Details
                 });
             }
 
             if (!file.FileName.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
             {
                 _logger.LogWarning("Tipo de arquivo inv�lido: {FileName}", file.FileName);
+                var msg = ApiMessages.InvalidFileType(HttpContext);
                 return BadRequest(new ErrorResponse
                 {
-                    Error = "Tipo de arquivo inv�lido",
-                    Details = "Apenas arquivos PDF s�o aceitos"
+                    Error = msg.Error,
+                    Details = msg.Details
                 });
             }
 
@@ -364,7 +377,11 @@ namespace pdf_ocr.Controllers
                 if (apiKeyService == null)
                 {
                     logger.LogWarning("IApiKeyService não está registrado no DI");
-                    return new UnauthorizedResult();
+                    var msg = ApiMessages.InternalServerError(context);
+                    return new ObjectResult(new ErrorResponse { Error = msg.Error, Details = msg.Details })
+                    {
+                        StatusCode = 500
+                    };
                 }
 
                 try
@@ -373,7 +390,8 @@ namespace pdf_ocr.Controllers
                     if (string.IsNullOrEmpty(userId))
                     {
                         logger.LogWarning("Chave de API inválida ou expirada");
-                        return new UnauthorizedResult();
+                        var msg = ApiMessages.ApiKeyInvalidOrExpired(context);
+                        return new UnauthorizedObjectResult(new ErrorResponse { Error = msg.Error, Details = msg.Details });
                     }
 
                     // Marcar o contexto para que o controlador possa recuperar o userId quando necessário
@@ -382,7 +400,8 @@ namespace pdf_ocr.Controllers
                 catch (Exception ex)
                 {
                     logger.LogError(ex, "Erro ao validar API Key");
-                    return new UnauthorizedResult();
+                    var msg = ApiMessages.ApiKeyInvalidOrExpired(context);
+                    return new UnauthorizedObjectResult(new ErrorResponse { Error = msg.Error, Details = msg.Details });
                 }
             }
             else
@@ -390,7 +409,10 @@ namespace pdf_ocr.Controllers
                 // Sem API key: verificar usuário autenticado via Claims
                 userId = context.User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
                 if (string.IsNullOrEmpty(userId))
-                    return new UnauthorizedResult();
+                {
+                    var msg = ApiMessages.UserNotAuthenticated(context);
+                    return new UnauthorizedObjectResult(new ErrorResponse { Error = msg.Error, Details = msg.Details });
+                }
             }
 
             // Custo: 1 cr�dito por PDF
@@ -400,11 +422,12 @@ namespace pdf_ocr.Controllers
             if (credits < COST)
             {
                 logger.LogWarning("Cr�ditos insuficientes: {UserId} tem {Credits}", userId, credits);
-                return new ObjectResult(new
+                var msg = ApiMessages.InsufficientCredits(context, COST, credits);
+                return new ObjectResult(new ErrorResponse
                 {
-                    error = "Cr�ditos insuficientes",
-                    details = $"Voc� precisa de {COST} cr�dito(s). Saldo: {credits}",
-                    upgradeUrl = "/pricing"
+                    Error = msg.Error,
+                    Details = msg.Details,
+                    UpgradeUrl = msg.UpgradeUrl
                 })
                 { StatusCode = 402 }; // Payment Required
             }
@@ -413,8 +436,11 @@ namespace pdf_ocr.Controllers
             var success = await userService.DeductCreditsAsync(userId, COST);
             if (!success)
             {
-                return new ObjectResult(new { error = "Erro ao deduzir cr�ditos" })
-                { StatusCode = 500 };
+                var msg = ApiMessages.DeductCreditsFailed(context);
+                return new ObjectResult(new ErrorResponse { Error = msg.Error, Details = msg.Details })
+                {
+                    StatusCode = 500
+                };
             }
 
             return null; // OK, pode processar

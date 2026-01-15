@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
 using pdf_ocr.Models;
 using pdf_ocr.Services;
 
@@ -12,11 +13,14 @@ namespace pdf_ocr.Controllers
     [Produces("application/json")]
     public class JobsController : ControllerBase
     {
+        private readonly IJobPersistenceService _persistenceService;
         private readonly IJobService _jobService;
         private readonly ILogger<JobsController> _logger;
-
-        public JobsController(IJobService jobService, ILogger<JobsController> logger)
+        public JobsController(IJobPersistenceService persistenceService,
+        IJobService jobService,
+        ILogger<JobsController> logger)
         {
+            _persistenceService = persistenceService;
             _jobService = jobService;
             _logger = logger;
         }
@@ -40,10 +44,11 @@ namespace pdf_ocr.Controllers
             if (job == null)
             {
                 _logger.LogWarning("Job não encontrado: {JobId}", jobId);
+                var msg = ApiMessages.JobNotFound(HttpContext, jobId);
                 return NotFound(new ErrorResponse
                 {
-                    Error = "Job não encontrado",
-                    Details = $"Nenhum job foi encontrado com o ID: {jobId}"
+                    Error = msg.Error,
+                    Details = msg.Details
                 });
             }
 
@@ -59,7 +64,7 @@ namespace pdf_ocr.Controllers
                 Error = job.Error,
                 DownloadUrl = job.Status == "completed" ? $"/api/jobs/{jobId}/download" : null,
                 Progress = job.ProgressPercent > 0 ? job.ProgressPercent : CalculateProgress(job.Status),
-                Message = job.ProgressInfo?.Message,
+                Message = ApiMessages.JobProgressMessage(HttpContext, job.ProgressInfo, job.Status),
                 Stage = job.ProgressInfo?.Stage,
                 TotalPages = job.ProgressInfo?.TotalPages,
                 ProcessedPages = job.ProgressInfo?.ProcessedPages,
@@ -90,10 +95,11 @@ namespace pdf_ocr.Controllers
             if (job == null)
             {
                 _logger.LogWarning("Job não encontrado para download: {JobId}", jobId);
+                var msg = ApiMessages.JobNotFound(HttpContext, jobId);
                 return NotFound(new ErrorResponse
                 {
-                    Error = "Job não encontrado",
-                    Details = $"Nenhum job foi encontrado com o ID: {jobId}"
+                    Error = msg.Error,
+                    Details = msg.Details
                 });
             }
 
@@ -101,10 +107,11 @@ namespace pdf_ocr.Controllers
             {
                 _logger.LogWarning("Tentativa de download de job não concluído: {JobId}, Status: {Status}",
                     jobId, job.Status);
+                var msg = ApiMessages.JobNotCompleted(HttpContext, job.Status);
                 return BadRequest(new ErrorResponse
                 {
-                    Error = "Job ainda não concluído",
-                    Details = $"Status atual: {job.Status}. Aguarde a conclusão do processamento."
+                    Error = msg.Error,
+                    Details = msg.Details
                 });
             }
 
@@ -112,10 +119,11 @@ namespace pdf_ocr.Controllers
             {
                 _logger.LogError("Arquivo processado não encontrado: {JobId}, Path: {Path}",
                     jobId, job.OutputPath);
+                var msg = ApiMessages.JobOutputMissing(HttpContext);
                 return NotFound(new ErrorResponse
                 {
-                    Error = "Arquivo processado não encontrado",
-                    Details = "O arquivo pode ter sido removido por limpeza automática"
+                    Error = msg.Error,
+                    Details = msg.Details
                 });
             }
 
@@ -132,10 +140,11 @@ namespace pdf_ocr.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Erro ao ler arquivo para download: {JobId}", jobId);
+                var msg = ApiMessages.DownloadFailed(HttpContext, ex.Message);
                 return StatusCode(500, new ErrorResponse
                 {
-                    Error = "Erro ao processar download",
-                    Details = ex.Message
+                    Error = msg.Error,
+                    Details = msg.Details
                 });
             }
         }
@@ -188,64 +197,190 @@ namespace pdf_ocr.Controllers
         }
 
         /// <summary>
-        /// Cancela um job em processamento
+        /// Busca jobs do usuário autenticado
         /// </summary>
-        /// <param name="jobId">ID do job</param>
-        /// <returns>Confirmação de cancelamento</returns>
-        /// <response code="200">Job cancelado com sucesso</response>
-        /// <response code="404">Job não encontrado</response>
-        /// <response code="400">Job não pode ser cancelado</response>
-        [HttpPost("{jobId}/cancel")]
-        [ProducesResponseType(typeof(CancelJobResponse), StatusCodes.Status200OK)]
-        [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status404NotFound)]
-        [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status400BadRequest)]
-        public async Task<IActionResult> CancelJob(string jobId)
+        [HttpGet("my-jobs")]
+        [Authorize]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        public async Task<ActionResult<JobsListResponse>> GetMyJobs(
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 10)
         {
-            _logger.LogInformation("Solicitado cancelamento do job: {JobId}", jobId);
-
-            var job = await _jobService.GetJobAsync(jobId);
-
-            if (job == null)
+            try
             {
-                _logger.LogWarning("Job não encontrado para cancelamento: {JobId}", jobId);
-                return NotFound(new ErrorResponse
+                var userIdClaim = User.FindFirst("sub")?.Value;
+                if (string.IsNullOrEmpty(userIdClaim))
                 {
-                    Error = "Job não encontrado",
-                    Details = $"Nenhum job foi encontrado com o ID: {jobId}"
+                    var msg = ApiMessages.UserNotAuthenticated(HttpContext);
+                    return Unauthorized(new ErrorResponse { Error = msg.Error, Details = msg.Details });
+                }
+
+                var jobs = await _persistenceService.GetUserJobsAsync(userIdClaim, page, pageSize);
+
+                return Ok(new JobsListResponse
+                {
+                    Jobs = jobs.Select(j => new JobDto
+                    {
+                        JobId = j.JobId,
+                        FileName = j.FileName,
+                        Status = j.Status,
+                        Progress = j.Progress,
+                        ErrorMessage = j.ErrorMessage,
+                        CreatedAt = j.CreatedAt,
+                        CompletedAt = j.CompletedAt
+                    }),
+                    Page = page,
+                    PageSize = pageSize,
+                    TotalCount = jobs.Count()
                 });
             }
-
-            if (job.Status == "completed" || job.Status == "failed")
+            catch (Exception ex)
             {
-                _logger.LogWarning("Tentativa de cancelar job já finalizado: {JobId}, Status: {Status}",
-                    jobId, job.Status);
-                return BadRequest(new ErrorResponse
-                {
-                    Error = "Job não pode ser cancelado",
-                    Details = $"O job já está no status: {job.Status}"
-                });
+                _logger.LogError(ex, "Erro ao buscar jobs do usuário");
+                var msg = ApiMessages.JobsFetchFailed(HttpContext);
+                return StatusCode(500, new ErrorResponse { Error = msg.Error, Details = msg.Details });
             }
-
-            var success = await _jobService.CancelJobAsync(jobId);
-
-            if (!success)
-            {
-                return StatusCode(500, new ErrorResponse
-                {
-                    Error = "Erro ao cancelar job",
-                    Details = "Não foi possível cancelar o job"
-                });
-            }
-
-            _logger.LogInformation("Job cancelado com sucesso: {JobId}", jobId);
-
-            return Ok(new CancelJobResponse
-            {
-                JobId = jobId,
-                Status = "cancelled",
-                Message = "Job cancelado com sucesso"
-            });
         }
+
+        /// <summary>
+        /// Retoma um job específico (útil após restart)
+        /// </summary>
+        [HttpPost("{jobId}/resume")]
+        [Authorize]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        public async Task<ActionResult> ResumeJob(string jobId)
+        {
+            try
+            {
+                var job = await _persistenceService.GetJobAsync(jobId);
+                if (job == null)
+                {
+                    var msg = ApiMessages.JobNotFound(HttpContext, jobId);
+                    return NotFound(new ErrorResponse { Error = msg.Error, Details = msg.Details });
+                }
+
+                // Só pode retomar jobs pending ou failed
+                if (job.Status != JobStatusConstants.Pending && job.Status != JobStatusConstants.Failed)
+                {
+                    var msg = ApiMessages.JobResumeNotAllowed(HttpContext, job.Status);
+                    return BadRequest(new ErrorResponse { Error = msg.Error, Details = msg.Details });
+                }
+
+                // Resetar para pending
+                await _persistenceService.UpdateJobAsync(jobId, new UpdateJobDto
+                {
+                    Status = JobStatusConstants.Pending,
+                    Progress = 0,
+                    ErrorMessage = null
+                });
+
+                _logger.LogInformation("Job {JobId} marcado para reprocessamento", jobId);
+
+                var okMsg = ApiMessages.JobMarkedForReprocessing(HttpContext);
+
+                return Ok(new
+                {
+                    message = okMsg.Message,
+                    jobId,
+                    status = JobStatusConstants.Pending
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erro ao retomar job {JobId}", jobId);
+                var msg = ApiMessages.JobResumeFailed(HttpContext);
+                return StatusCode(500, new ErrorResponse { Error = msg.Error, Details = msg.Details });
+            }
+        }
+
+        /// <summary>
+        /// Cancela um job em execução
+        /// </summary>
+        [HttpPost("{jobId}/cancel")]
+        [Authorize]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        public async Task<ActionResult> CancelJob(string jobId)
+        {
+            try
+            {
+                var job = await _persistenceService.GetJobAsync(jobId);
+                if (job == null)
+                {
+                    var msg = ApiMessages.JobNotFound(HttpContext, jobId);
+                    return NotFound(new ErrorResponse { Error = msg.Error, Details = msg.Details });
+                }
+
+                // Só pode cancelar jobs pending ou processing
+                if (job.Status == JobStatusConstants.Completed || job.Status == JobStatusConstants.Failed)
+                {
+                    var msg = ApiMessages.JobAlreadyFinalized(HttpContext, job.Status);
+                    return BadRequest(new ErrorResponse { Error = msg.Error, Details = msg.Details });
+                }
+
+                await _persistenceService.UpdateJobAsync(jobId, new UpdateJobDto
+                {
+                    Status = JobStatusConstants.Failed,
+                    ErrorMessage = "Cancelado pelo usuário",
+                    CompletedAt = DateTime.UtcNow
+                });
+
+                _logger.LogInformation("Job {JobId} cancelado pelo usuário", jobId);
+
+                var okMsg = ApiMessages.JobCanceled(HttpContext);
+
+                return Ok(new
+                {
+                    message = okMsg.Message,
+                    jobId,
+                    status = JobStatusConstants.Failed
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erro ao cancelar job {JobId}", jobId);
+                var msg = ApiMessages.JobCancelFailed(HttpContext);
+                return StatusCode(500, new ErrorResponse { Error = msg.Error, Details = msg.Details });
+            }
+        }
+
+        /// <summary>
+        /// Busca jobs por status (admin)
+        /// </summary>
+        [HttpGet("by-status/{status}")]
+        [Authorize(Roles = "admin")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+        public async Task<ActionResult<IEnumerable<JobDto>>> GetJobsByStatus(string status)
+        {
+            try
+            {
+                var jobs = await _persistenceService.GetJobsByStatusAsync(status);
+
+                return Ok(jobs.Select(j => new JobDto
+                {
+                    JobId = j.JobId,
+                    FileName = j.FileName,
+                    Status = j.Status,
+                    Progress = j.Progress,
+                    ErrorMessage = j.ErrorMessage,
+                    CreatedAt = j.CreatedAt,
+                    CompletedAt = j.CompletedAt,
+                    UserId = j.UserId
+                }));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erro ao buscar jobs por status {Status}", status);
+                var msg = ApiMessages.JobsFetchFailed(HttpContext);
+                return StatusCode(500, new ErrorResponse { Error = msg.Error, Details = msg.Details });
+            }
+        }
+
 
         /// <summary>
         /// Remove jobs antigos (executar manualmente ou via cron)
@@ -269,7 +404,7 @@ namespace pdf_ocr.Controllers
             return Ok(new CleanupResponse
             {
                 RemovedCount = removed,
-                Message = $"Removidos {removed} job(s) com mais de {hoursOld} hora(s)"
+                Message = ApiMessages.CleanupRemovedMessage(HttpContext, removed, hoursOld)
             });
         }
 
@@ -304,5 +439,24 @@ namespace pdf_ocr.Controllers
                 _ => 0
             };
         }
+    }// DTOs para responses
+    public class JobDto
+    {
+        public string JobId { get; set; } = string.Empty;
+        public string FileName { get; set; } = string.Empty;
+        public string Status { get; set; } = string.Empty;
+        public int Progress { get; set; }
+        public string? ErrorMessage { get; set; }
+        public DateTime CreatedAt { get; set; }
+        public DateTime? CompletedAt { get; set; }
+        public string? UserId { get; set; }
+    }
+
+    public class JobsListResponse
+    {
+        public IEnumerable<JobDto> Jobs { get; set; } = Enumerable.Empty<JobDto>();
+        public int Page { get; set; }
+        public int PageSize { get; set; }
+        public int TotalCount { get; set; }
     }
 }
