@@ -1,0 +1,53 @@
+# ============================================
+# docker-compose.prod.yml (Produção)
+#
+# Objetivo:
+# - Rodar a API e Redis em containers separados (boa prática)
+# - Redis com senha + persistência
+# - Sem expor Redis na porta do host
+#
+# Uso:
+#   1) cp .env.example .env
+#   2) edite REDIS_PASSWORD e seus segredos (Supabase/Stripe/etc)
+#   3) docker compose -f docker-compose.prod.yml up -d --build
+# ============================================
+
+version: '3.8'
+
+services:
+  pdf-ocr-api:
+    build: .
+    ports:
+      - "5000:8080"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - ASPNETCORE_URLS=http://+:8080
+      # Opção A (recomendada no Compose): StackExchange.Redis format
+      - Redis__Connection=redis:6379,password=${REDIS_PASSWORD},abortConnect=false
+      # Opção B (comum em cloud): REDIS_URL=redis://:password@host:6379 (a API agora suporta)
+      # - REDIS_URL=${REDIS_URL}
+    restart: unless-stopped
+    depends_on:
+      - redis
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}"]
+    expose:
+      - "6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a $$REDIS_PASSWORD ping | grep PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  redis_data:

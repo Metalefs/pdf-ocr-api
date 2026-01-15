@@ -145,7 +145,64 @@ builder.Services.AddSingleton<IApiKeyService, ApiKeyService>();
 // Registrar Redis (StackExchange.Redis) para rate-limiting de demo
 try
 {
-    var redisConnection = builder.Configuration["Redis:Connection"] ?? "http://localhost:32768";
+    var redisConnection = builder.Configuration["Redis:Connection"];
+
+    // Production platforms commonly provide REDIS_URL like:
+    // - redis://:password@hostname:6379
+    // - rediss://:password@hostname:6380
+    if (string.IsNullOrWhiteSpace(redisConnection))
+    {
+        var redisUrl = Environment.GetEnvironmentVariable("REDIS_URL");
+        if (!string.IsNullOrWhiteSpace(redisUrl))
+        {
+            try
+            {
+                if (redisUrl.StartsWith("redis://", StringComparison.OrdinalIgnoreCase) ||
+                    redisUrl.StartsWith("rediss://", StringComparison.OrdinalIgnoreCase))
+                {
+                    var uri = new Uri(redisUrl);
+                    var hostPort = $"{uri.Host}:{(uri.IsDefaultPort ? 6379 : uri.Port)}";
+
+                    // Uri.UserInfo is typically ":password" or "user:password"
+                    string? password = null;
+                    if (!string.IsNullOrWhiteSpace(uri.UserInfo))
+                    {
+                        var userInfoParts = uri.UserInfo.Split(':', 2);
+                        password = userInfoParts.Length == 2 ? userInfoParts[1] : userInfoParts[0];
+                    }
+
+                    var parts = new List<string> { hostPort };
+                    if (!string.IsNullOrWhiteSpace(password))
+                        parts.Add($"password={password}");
+                    if (uri.Scheme.Equals("rediss", StringComparison.OrdinalIgnoreCase))
+                        parts.Add("ssl=true");
+
+                    // Better behavior in container/cloud environments
+                    parts.Add("abortConnect=false");
+
+                    redisConnection = string.Join(",", parts);
+                }
+                else
+                {
+                    // If it's already in StackExchange.Redis format, just use it
+                    redisConnection = redisUrl;
+                }
+            }
+            catch
+            {
+                // Ignore parsing failures; fall back to defaults
+            }
+        }
+    }
+
+    redisConnection ??= "localhost:6379";
+
+    // StackExchange.Redis expects a host:port (no URI scheme)
+    if (redisConnection.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
+        redisConnection = redisConnection.Substring("http://".Length);
+    else if (redisConnection.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        redisConnection = redisConnection.Substring("https://".Length);
+
     var multiplexer = StackExchange.Redis.ConnectionMultiplexer.Connect(redisConnection);
     builder.Services.AddSingleton<StackExchange.Redis.IConnectionMultiplexer>(multiplexer);
     Console.WriteLine($"✓ Redis conectado: {redisConnection}");
