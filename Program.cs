@@ -63,7 +63,7 @@ builder.Services.AddSwaggerGen(options =>
     {
         Title = "TextLayer OCR API",
         Version = "v1.0",
-        Description = "API de OCR para PDFs com preservaï¿½ï¿½o de formulï¿½rios e campos preenchï¿½veis"
+        Description = "API "
     });
     // Adicionar autenticaÃ§Ã£o JWT no Swagger
     options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme

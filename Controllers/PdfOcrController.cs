@@ -4,6 +4,10 @@ using pdf_ocr.Models;
 using pdf_ocr.Services;
 using System.Security.Claims;
 using StackExchange.Redis;
+using System.Text;
+using iText.Kernel.Pdf;
+using iText.Kernel.Pdf.Canvas.Parser;
+using iText.Kernel.Pdf.Canvas.Parser.Listener;
 
 namespace pdf_ocr.Controllers
 {
@@ -280,6 +284,282 @@ namespace pdf_ocr.Controllers
                     Details = msg.Details
                 });
             }
+        }
+
+
+        /// <summary>
+        /// Processa um PDF de forma sncrona e retorna o TEXTO extra eddo ap f3s aplicar OCR
+        /// </summary>
+        /// <param name="request">Request multipart/form-data contendo o PDF</param>
+        /// <returns>Texto extra eddo do PDF OCR (JSON)</returns>
+        /// <response code="200">OCR executado e texto retornado com sucesso</response>
+        /// <response code="400">Arquivo inv e1lido ou muito grande</response>
+        /// <response code="500">Erro no processamento</response>
+        [HttpPost("process-text")]
+        [Consumes("multipart/form-data")]
+        [ProducesResponseType(typeof(OcrTextResponse), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status500InternalServerError)]
+        [RequestSizeLimit(10_000_000)]
+        [Authorize]
+        public async Task<IActionResult> ProcessText(
+            [FromForm] PdfUploadRequest request)
+        {
+            _logger.LogInformation("Recebida requisi e7 e3o s edncrona de OCR para texto");
+
+            // Verificar cr e9ditos ANTES de processar
+            var creditCheck = await CreditCheckAttribute.CheckCredits(
+                HttpContext, _userService, _logger);
+
+            if (creditCheck != null)
+                return creditCheck;
+
+            // Valida e7 f5es
+            var validationError = ValidateFile(request.File);
+            if (validationError != null)
+            {
+                return validationError;
+            }
+
+            var userId = GetUserId();
+            string? jobDir = null;
+
+            try
+            {
+                // Criar diret f3rio tempor e1rio
+                jobDir = Path.Combine(Path.GetTempPath(), "ocr_text", Guid.NewGuid().ToString("N"));
+                Directory.CreateDirectory(jobDir);
+
+                string inputPath = Path.Combine(jobDir, "input.pdf");
+
+                _logger.LogInformation("Salvando arquivo: {FileName} ({Size} bytes)",
+                    request.File.FileName, request.File.Length);
+
+                using (var stream = System.IO.File.Create(inputPath))
+                {
+                    await request.File.CopyToAsync(stream);
+                }
+
+                // Processar imediatamente
+                _logger.LogInformation("Iniciando pipeline OCR para extra e7 e3o de texto");
+                var result = await Task.Run(() => OcrPipelineService.Run(jobDir));
+
+                if (!result.Success)
+                {
+                    _logger.LogError("Falha no processamento: {Error}", result.Error);
+                    await _userService.AddCreditsAsync(userId, 1);
+                    CleanupDirectory(jobDir);
+
+                    var msg = ApiMessages.OcrProcessingFailed(HttpContext, result.Error);
+
+                    return StatusCode(500, new ErrorResponse
+                    {
+                        Error = msg.Error,
+                        Details = msg.Details,
+                        Logs = result.Logs
+                    });
+                }
+
+                var (text, pageCount) = ExtractTextFromPdf(result.OutputPdf);
+
+                CleanupDirectory(jobDir);
+
+                return Ok(new OcrTextResponse
+                {
+                    Text = text,
+                    PageCount = pageCount,
+                    CreditsRemaining = await _userService.GetCreditsAsync(userId)
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erro cr edtico no processamento de OCR para texto");
+                try
+                {
+                    await _userService.AddCreditsAsync(userId, 1);
+                }
+                catch
+                {
+                    // Ignorar falhas de rollback de cr e9dito
+                }
+                if (!string.IsNullOrEmpty(jobDir))
+                {
+                    CleanupDirectory(jobDir);
+                }
+
+                var msg = ApiMessages.InternalServerError(HttpContext);
+                return StatusCode(500, new ErrorResponse
+                {
+                    Error = msg.Error,
+                    Details = msg.Details
+                });
+            }
+        }
+
+
+        /// <summary>
+        /// DEMO: Processa um PDF e retorna o TEXTO OCR sem autentica e7 e3o (limitado)
+        /// </summary>
+        [HttpPost("process-text-demo")]
+        [AllowAnonymous]
+        [Consumes("multipart/form-data")]
+        [ProducesResponseType(typeof(OcrTextResponse), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status429TooManyRequests)]
+        [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status500InternalServerError)]
+        [RequestSizeLimit(1_000_000)]
+        public async Task<IActionResult> ProcessTextDemo([FromForm] PdfUploadRequest request)
+        {
+            var file = request.File;
+
+            // Limites para demo
+            if (file == null || file.Length == 0)
+            {
+                var msg = ApiMessages.NoFileProvided(HttpContext);
+                return BadRequest(new ErrorResponse
+                {
+                    Error = msg.Error,
+                    Details = msg.Details
+                });
+            }
+
+            if (file.Length > 1_000_000) // 1MB
+            {
+                var msg = ApiMessages.DemoFileTooLarge(HttpContext);
+                return BadRequest(new ErrorResponse
+                {
+                    Error = msg.Error,
+                    Details = msg.Details,
+                    UpgradeUrl = msg.UpgradeUrl
+                });
+            }
+
+            if (!file.FileName.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
+            {
+                var msg = ApiMessages.InvalidFileType(HttpContext);
+                return BadRequest(new ErrorResponse
+                {
+                    Error = msg.Error,
+                    Details = msg.Details
+                });
+            }
+
+            // Rate-limit por IP: at e9 3 chamadas por per edodo (24h)
+            string ip = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+            try
+            {
+                var multiplexer = HttpContext.RequestServices.GetService(typeof(IConnectionMultiplexer)) as IConnectionMultiplexer;
+                if (multiplexer != null)
+                {
+                    var db = multiplexer.GetDatabase();
+                    var key = $"demo_text_count:{ip}";
+                    var count = (long)await db.StringIncrementAsync(key).ConfigureAwait(false);
+                    if (count == 1)
+                    {
+                        await db.KeyExpireAsync(key, TimeSpan.FromHours(24)).ConfigureAwait(false);
+                    }
+
+                    if (count > 3)
+                    {
+                        _logger.LogWarning("IP {Ip} excedeu limite demo_text: {Count}", ip, count);
+                        var msg = ApiMessages.DemoLimitExceeded(HttpContext);
+                        return StatusCode(429, new ErrorResponse
+                        {
+                            Error = msg.Error,
+                            Details = msg.Details,
+                            UpgradeUrl = msg.UpgradeUrl
+                        });
+                    }
+                }
+                else
+                {
+                    _logger.LogDebug("Redis IConnectionMultiplexer n e3o registrado  e2 c0 demo_text rate-limit n e3o ser e1 aplicado");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Falha ao verificar contador demo_text no Redis  e2 c0 permitindo demo sem contagem");
+            }
+
+            string? jobDir = null;
+            try
+            {
+                jobDir = Path.Combine(Path.GetTempPath(), "ocr_text_demo", Guid.NewGuid().ToString("N"));
+                Directory.CreateDirectory(jobDir);
+
+                string inputPath = Path.Combine(jobDir, "input.pdf");
+                using (var stream = System.IO.File.Create(inputPath))
+                {
+                    await request.File.CopyToAsync(stream);
+                }
+
+                var result = await Task.Run(() => OcrPipelineService.Run(jobDir));
+
+                if (!result.Success)
+                {
+                    CleanupDirectory(jobDir);
+                    var msg = ApiMessages.OcrProcessingFailed(HttpContext, result.Error);
+                    return StatusCode(500, new ErrorResponse
+                    {
+                        Error = msg.Error,
+                        Details = msg.Details,
+                        Logs = result.Logs
+                    });
+                }
+
+                var (text, pageCount) = ExtractTextFromPdf(result.OutputPdf);
+                CleanupDirectory(jobDir);
+
+                return Ok(new OcrTextResponse
+                {
+                    Text = text,
+                    PageCount = pageCount,
+                    CreditsRemaining = 0
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erro cr edtico no processamento demo de OCR para texto");
+                if (!string.IsNullOrEmpty(jobDir))
+                {
+                    CleanupDirectory(jobDir);
+                }
+
+                var msg = ApiMessages.InternalServerError(HttpContext);
+                return StatusCode(500, new ErrorResponse
+                {
+                    Error = msg.Error,
+                    Details = msg.Details
+                });
+            }
+        }
+
+
+        private static (string Text, int PageCount) ExtractTextFromPdf(string pdfPath)
+        {
+            using var pdfDoc = new PdfDocument(new PdfReader(pdfPath));
+            int pageCount = pdfDoc.GetNumberOfPages();
+
+            var sb = new StringBuilder();
+
+            for (int i = 1; i <= pageCount; i++)
+            {
+                var strategy = new LocationTextExtractionStrategy();
+                var pageText = PdfTextExtractor.GetTextFromPage(pdfDoc.GetPage(i), strategy) ?? string.Empty;
+                pageText = pageText.Trim();
+
+                if (!string.IsNullOrEmpty(pageText))
+                {
+                    sb.AppendLine(pageText);
+                }
+
+                if (i < pageCount)
+                {
+                    sb.AppendLine();
+                }
+            }
+
+            return (sb.ToString().TrimEnd(), pageCount);
         }
 
 
