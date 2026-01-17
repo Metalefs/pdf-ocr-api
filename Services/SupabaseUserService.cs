@@ -224,7 +224,7 @@ namespace pdf_ocr.Services
                 }
 
                 user.Plan = plan;
-                user.Credits = credits;
+                user.Credits = credits + user.Credits;
                 user.StripeSubscriptionId = subscriptionId;
                 user.UpdatedAt = DateTime.UtcNow;
 
