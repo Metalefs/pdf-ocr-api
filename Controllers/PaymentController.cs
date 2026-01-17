@@ -4,7 +4,6 @@ using pdf_ocr.Services;
 using StackExchange.Redis;
 using Stripe;
 using Stripe.Checkout;
-using Stripe.V2.Core;
 using System.Security.Claims;
 using Event = Stripe.Event;
 
@@ -138,6 +137,15 @@ public class PaymentController : ControllerBase
                     { "userId", userId },
                     { "email", user.Email },
                     { "plan", req.PlanId }
+                },
+                SubscriptionData = new SessionSubscriptionDataOptions
+                {
+                    Metadata = new Dictionary<string, string>
+                    {
+                        { "userId", userId },
+                        { "email", user.Email },
+                        { "plan", req.PlanId }
+                    }
                 }
             };
 
@@ -176,6 +184,109 @@ public class PaymentController : ControllerBase
     }
 
     /// <summary>
+    /// Cancela assinatura do Stripe (por padrão: cancelamento ao fim do período)
+    /// </summary>
+    [HttpPost("cancel")]
+    [Authorize]
+    [ProducesResponseType(typeof(CancelSubscriptionResponse), 200)]
+    [ProducesResponseType(400)]
+    [ProducesResponseType(401)]
+    [ProducesResponseType(404)]
+    [ProducesResponseType(409)]
+    public async Task<IActionResult> CancelSubscription([FromBody] CancelSubscriptionRequest req)
+    {
+        try
+        {
+            var userId = GetUserId();
+            if (string.IsNullOrEmpty(userId))
+            {
+                var msg = ApiMessages.InvalidToken(HttpContext);
+                return Unauthorized(new pdf_ocr.Models.ErrorResponse
+                {
+                    Error = msg.Error,
+                    Details = msg.Details
+                });
+            }
+
+            var user = await _userService.GetUserAsync(userId);
+            if (user == null)
+            {
+                var msg = ApiMessages.UserNotFound(HttpContext);
+                return NotFound(new pdf_ocr.Models.ErrorResponse
+                {
+                    Error = msg.Error,
+                    Details = msg.Details
+                });
+            }
+
+            if (string.IsNullOrWhiteSpace(user.StripeSubscriptionId))
+            {
+                var msg = ApiMessages.SubscriptionNotFound(HttpContext);
+                return Conflict(new pdf_ocr.Models.ErrorResponse
+                {
+                    Error = msg.Error,
+                    Details = msg.Details
+                });
+            }
+
+            StripeConfiguration.ApiKey = _stripeSecretKey;
+            var subService = new SubscriptionService();
+
+            Subscription subscription;
+            if (req.Immediate)
+            {
+                subscription = await subService.CancelAsync(user.StripeSubscriptionId, new SubscriptionCancelOptions
+                {
+                    InvoiceNow = false,
+                    Prorate = false
+                });
+
+                var freeCredits = await GetFreeCreditsAsync();
+                await _userService.UpdateUserPlanAsync(userId, "free", freeCredits, null);
+                await _userService.UpdatePlanAsync(userId, "free", null);
+            }
+            else
+            {
+                subscription = await subService.UpdateAsync(user.StripeSubscriptionId, new SubscriptionUpdateOptions
+                {
+                    CancelAtPeriodEnd = true
+                });
+
+                // Guardar data de fim do ciclo (para UI: "Renews" / "Ends")
+                await _userService.UpdatePlanAsync(userId, user.Plan, GetSubscriptionPeriodEnd(subscription));
+            }
+
+            return Ok(new CancelSubscriptionResponse
+            {
+                SubscriptionId = subscription.Id,
+                Status = subscription.Status,
+                CancelAtPeriodEnd = subscription.CancelAtPeriodEnd,
+                CurrentPeriodEnd = GetSubscriptionPeriodEnd(subscription)
+            });
+        }
+        catch (StripeException ex)
+        {
+            _logger.LogError(ex, "Erro no Stripe ao cancelar assinatura: {Message}", ex.Message);
+            var msg = ApiMessages.StripeError(HttpContext, ex.Message);
+            return BadRequest(new pdf_ocr.Models.ErrorResponse
+            {
+                Error = msg.Error,
+                Details = msg.Details
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Erro ao cancelar assinatura");
+            var msg = ApiMessages.SubscriptionCancelFailed(HttpContext);
+            return StatusCode(500, new pdf_ocr.Models.ErrorResponse
+            {
+                Error = msg.Error,
+                Details = msg.Details
+            });
+        }
+    }
+
+    /// <summary>
     /// Webhook do Stripe (eventos de pagamento)
     /// </summary>
     [HttpPost("webhook")]
@@ -194,12 +305,14 @@ public class PaymentController : ControllerBase
             );
 
             _logger.LogInformation("Webhook recebido: {Type}", stripeEvent.Type);
-            var subscription = stripeEvent.Data.Object as Subscription;
+            var subscription = stripeEvent.Data.Object as Stripe.Subscription;
             // Processar eventos
             switch (stripeEvent.Type)
             {
                 case "checkout.session.completed":
-                    var session = await this.RetrieveCheckoutSession((stripeEvent.Data.Object as Session).Id);
+                    var sessionObj = stripeEvent.Data.Object as Session;
+                    if (sessionObj == null || string.IsNullOrWhiteSpace(sessionObj.Id)) break;
+                    var session = await this.RetrieveCheckoutSession(sessionObj.Id);
                     await HandleCheckoutCompleted(session);
                     break;
 
@@ -220,7 +333,7 @@ public class PaymentController : ControllerBase
         }
     }
 
-    async Task<Session> RetrieveCheckoutSession(string sessionId)
+    async Task<Session?> RetrieveCheckoutSession(string sessionId)
     {
         StripeConfiguration.ApiKey = _stripeSecretKey;
 
@@ -267,8 +380,24 @@ public class PaymentController : ControllerBase
             return;
         }
 
-        // Atualizar usuário
-        await _userService.UpdateUserPlanAsync(userId, plan.Name.ToLower(), plan.Credits);
+        // Atualizar usuário (persistir StripeSubscriptionId quando disponível)
+        var subscriptionId = session.SubscriptionId;
+        await _userService.UpdateUserPlanAsync(userId, plan.Name.ToLower(), plan.Credits, subscriptionId);
+
+        // Salvar data de renovação/fim do período atual
+        if (!string.IsNullOrWhiteSpace(subscriptionId))
+        {
+            try
+            {
+                var subService = new SubscriptionService();
+                var subscription = await subService.GetAsync(subscriptionId);
+                await _userService.UpdatePlanAsync(userId, plan.Name.ToLower(), GetSubscriptionPeriodEnd(subscription));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Falha ao buscar subscription para CurrentPeriodEnd: {SubId}", subscriptionId);
+            }
+        }
 
         _logger.LogInformation(
                  "Assinatura ativada: {UserId} → {Plan} (+{Credits} créditos)",
@@ -279,19 +408,72 @@ public class PaymentController : ControllerBase
     {
         if (subscription?.CustomerId == null) return;
 
-        // Lógica de atualização de assinatura
-        _logger.LogInformation("Assinatura atualizada: {SubId}", subscription.Id);
-        await Task.CompletedTask;
+        // Atualizar subscriptionEndsAt usando metadata (userId)
+        if (subscription.Metadata != null && subscription.Metadata.TryGetValue("userId", out var userId)
+            && !string.IsNullOrWhiteSpace(userId))
+        {
+            try
+            {
+                var user = await _userService.GetUserAsync(userId);
+                var plan = user?.Plan ?? "free";
+                await _userService.UpdatePlanAsync(userId, plan, GetSubscriptionPeriodEnd(subscription));
+                _logger.LogInformation("Assinatura atualizada: {SubId} (User: {UserId})", subscription.Id, userId);
+                return;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erro ao atualizar SubscriptionEndsAt via webhook (SubId: {SubId})", subscription.Id);
+            }
+        }
+
+        _logger.LogInformation("Assinatura atualizada (sem metadata userId): {SubId}", subscription.Id);
     }
 
     private async Task HandleSubscriptionCancelled(Subscription? subscription)
     {
         if (subscription?.CustomerId == null) return;
 
-        // Lógica de cancelamento de assinatura
-        // TODO: Implementar lookup de customer_id → user_id
-        _logger.LogInformation("Assinatura cancelada: {SubId}", subscription.Id);
-        await Task.CompletedTask;
+        // Cancelamento definitivo (subscription.deleted)
+        if (subscription.Metadata != null && subscription.Metadata.TryGetValue("userId", out var userId)
+            && !string.IsNullOrWhiteSpace(userId))
+        {
+            try
+            {
+                var freeCredits = await GetFreeCreditsAsync();
+                await _userService.UpdateUserPlanAsync(userId, "free", freeCredits, null);
+                await _userService.UpdatePlanAsync(userId, "free", null);
+                _logger.LogInformation("Assinatura cancelada: {SubId} (User: {UserId})", subscription.Id, userId);
+                return;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erro ao processar cancelamento via webhook (SubId: {SubId})", subscription.Id);
+            }
+        }
+
+        _logger.LogInformation("Assinatura cancelada (sem metadata userId): {SubId}", subscription.Id);
+    }
+
+    private async Task<int> GetFreeCreditsAsync()
+    {
+        try
+        {
+            var plans = await _plansService.GetPlansAsync();
+            var free = plans.FirstOrDefault(p =>
+                string.Equals(p.Id, "free", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(p.Name, "free", StringComparison.OrdinalIgnoreCase));
+
+            return free?.Credits ?? 2;
+        }
+        catch
+        {
+            return 2;
+        }
+    }
+
+    private static DateTime? GetSubscriptionPeriodEnd(Stripe.Subscription subscription)
+    {
+        return subscription.Items?.Data?.FirstOrDefault()?.CurrentPeriodEnd;
     }
 
     private string GetUserId()
@@ -317,4 +499,20 @@ public class CheckoutResponse
 {
     public string SessionId { get; set; } = "";
     public string Url { get; set; } = "";
+}
+
+public class CancelSubscriptionRequest
+{
+    /// <summary>
+    /// Se true: cancela imediatamente. Se false: cancela ao fim do período atual.
+    /// </summary>
+    public bool Immediate { get; set; } = false;
+}
+
+public class CancelSubscriptionResponse
+{
+    public string SubscriptionId { get; set; } = "";
+    public string Status { get; set; } = "";
+    public bool CancelAtPeriodEnd { get; set; }
+    public DateTime? CurrentPeriodEnd { get; set; }
 }

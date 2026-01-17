@@ -305,6 +305,20 @@ public static class ApiMessages
             : ("Stripe error", details);
     }
 
+    public static (string Error, string Details) SubscriptionNotFound(HttpContext ctx)
+    {
+        return IsPt(ctx)
+            ? ("Assinatura não encontrada", "Nenhuma assinatura ativa foi encontrada para este usuário")
+            : ("Subscription not found", "No active subscription was found for this user");
+    }
+
+    public static (string Error, string Details) SubscriptionCancelFailed(HttpContext ctx)
+    {
+        return IsPt(ctx)
+            ? ("Erro ao cancelar assinatura", "Não foi possível cancelar a assinatura")
+            : ("Failed to cancel subscription", "Unable to cancel the subscription");
+    }
+
     public static (string Error, string Details) JobsFetchFailed(HttpContext ctx)
     {
         return IsPt(ctx)
