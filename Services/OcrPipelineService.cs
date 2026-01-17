@@ -1,11 +1,13 @@
-﻿using PDFiumCore;
-using iText.Forms;
+﻿using iText.Forms;
 using iText.Kernel.Pdf;
 using iText.Kernel.Pdf.Canvas;
+using iText.Kernel.Pdf.Filespec;
+using PDFiumCore;
 using SkiaSharp;
 using System.Diagnostics;
 using System.Text;
 using PdfPage = iText.Kernel.Pdf.PdfPage;
+using pdf_ocr.Services;
 
 namespace pdf_ocr
 {
@@ -546,6 +548,82 @@ namespace pdf_ocr
                     var ocrXObject = ocrPage.CopyAsFormXObject(dest);
                     canvas.AddXObjectFittedIntoRectangle(ocrXObject, rect);
                 }
+            }
+            if (!PdfSignatureDetector.HasDigitalSignatures(originalPdf))
+            {
+                addLog("[MERGE] Nenhuma assinatura digital detectada no original — não anexando o PDF original.");
+                return;
+            }
+
+            RemoveAllDigitalSignatures(dest, addLog);
+
+            addLog("[MERGE] Assinaturas digitais detectadas — anexando o PDF original ao resultado...");
+
+            try
+            {
+                // Define o nome do arquivo como aparecerá no painel de anexos
+                string attachmentName = $"Original_{Path.GetFileName(originalPdf)}";
+
+                static byte[] ReadAllBytesShared(string path)
+                {
+                    using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                    using var ms = new MemoryStream();
+                    fs.CopyTo(ms);
+                    return ms.ToArray();
+                }
+
+                // IMPORTANT: iText may defer reading embedded-file content until the document is closed.
+                // Passing a Stream here can lead to "Cannot access a closed file" if the stream is disposed
+                // before PdfDocument is finalized. Use byte[] to avoid lifetime issues.
+                var originalBytes = ReadAllBytesShared(originalPdf);
+                var fileSpec = PdfFileSpec.CreateEmbeddedFileSpec(
+                    dest,
+                    originalBytes,
+                    attachmentName,
+                    "Arquivo original anexado (assinaturas digitais são mantidas somente no original).",
+                    PdfName.ApplicationPdf,
+                    null,
+                    PdfName.Alternative
+                );
+
+                // Adiciona ao documento de saída
+                dest.AddFileAttachment(attachmentName, fileSpec);
+            }
+            catch (Exception ex)
+            {
+                addLog($"[AVISO] Falha ao anexar original: {ex.Message}");
+                // Não lançamos erro crítico aqui para não perder o PDF gerado, 
+                // mas é bom logar.
+            }
+        }
+
+        private static void RemoveAllDigitalSignatures(PdfDocument pdf, Action<string>? log = null)
+        {
+            var acroForm = PdfAcroForm.GetAcroForm(pdf, false);
+            if (acroForm == null)
+                return;
+
+            var fields = acroForm.GetAllFormFields();
+            var sigFields = fields
+                .Where(f => f.Value.GetFormType().Equals(PdfName.Sig))
+                .Select(f => f.Key)
+                .ToList();
+
+            foreach (var fieldName in sigFields)
+            {
+                log?.Invoke($"[SIGNATURE] Removendo campo de assinatura inválido: {fieldName}");
+                acroForm.RemoveField(fieldName);
+            }
+
+            // Limpa flags de assinatura
+            var acroFormDict = acroForm.GetPdfObject();
+            acroFormDict.Remove(PdfName.SigFlags);
+
+            // Se não restarem campos, remove AcroForm inteiro
+            if (!acroForm.GetAllFormFields().Any())
+            {
+                pdf.GetCatalog().Remove(PdfName.AcroForm);
+                log?.Invoke("[SIGNATURE] AcroForm removido do PDF final.");
             }
         }
 

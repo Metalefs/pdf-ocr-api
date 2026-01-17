@@ -1,18 +1,18 @@
+﻿using iText.Kernel.Pdf;
+using iText.Kernel.Pdf.Canvas.Parser;
+using iText.Kernel.Pdf.Canvas.Parser.Listener;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using pdf_ocr.Models;
 using pdf_ocr.Services;
-using System.Security.Claims;
 using StackExchange.Redis;
+using System.Security.Claims;
 using System.Text;
-using iText.Kernel.Pdf;
-using iText.Kernel.Pdf.Canvas.Parser;
-using iText.Kernel.Pdf.Canvas.Parser.Listener;
 
 namespace pdf_ocr.Controllers
 {
     /// <summary>
-    /// Controlador respons�vel pelo processamento de PDFs com OCR
+    /// Controlador responsvel pelo processamento de PDFs com OCR
     /// </summary>
     [ApiController]
     [Route("api/[controller]")]
@@ -34,12 +34,12 @@ namespace pdf_ocr.Controllers
         }
 
         /// <summary>
-        /// Inicia o processamento ass�ncrono de um PDF
+        /// Inicia o processamento assncrono de um PDF
         /// </summary>
         /// <param name="file">Arquivo PDF para processar</param>
-        /// <returns>Informa��es do job criado</returns>
+        /// <returns>Informaes do job criado</returns>
         /// <response code="200">Job criado com sucesso</response>
-        /// <response code="400">Arquivo inv�lido ou muito grande</response>
+        /// <response code="400">Arquivo invlido ou muito grande</response>
         /// <response code="500">Erro ao criar job</response>
         [HttpPost("process")]
         [Consumes("multipart/form-data")]
@@ -51,17 +51,17 @@ namespace pdf_ocr.Controllers
         public async Task<IActionResult> ProcessAsync(
     [FromForm] PdfUploadRequest request)
         {
-            _logger.LogInformation("Recebida requisi��o ass�ncrona de processamento");
+            _logger.LogInformation("Recebida requisio assncrona de processamento");
             var file = request.File;
-            // Verificar cr�ditos ANTES de processar
+            // Verificar crditos ANTES de processar
             var creditCheck = await CreditCheckAttribute.CheckCredits(
                 HttpContext, _userService, _logger);
 
             if (creditCheck != null)
-                return creditCheck; // Sem cr�ditos
+                return creditCheck; // Sem crditos
 
 
-            // Valida��es
+            // Validaes
             var validationError = ValidateFile(request.File);
             if (validationError != null)
             {
@@ -75,7 +75,7 @@ namespace pdf_ocr.Controllers
                 var jobId = await _jobService.CreateJobAsync(file);
 
                 _logger.LogInformation(
-                    "Job criado: {JobId} por usu�rio {UserId}, arquivo {FileName}",
+                    "Job criado: {JobId} por usurio {UserId}, arquivo {FileName}",
                     jobId, userId, file.FileName);
 
                 return Ok(new ProcessResponse
@@ -90,8 +90,8 @@ namespace pdf_ocr.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Erro ao criar job ass�ncrono");
-                // Devolver cr�dito em caso de erro
+                _logger.LogError(ex, "Erro ao criar job assncrono");
+                // Devolver crdito em caso de erro
                 await _userService.AddCreditsAsync(GetUserId(), 1);
                 var msg = ApiMessages.CreateJobFailed(HttpContext, ex.Message);
                 return StatusCode(500, new ErrorResponse
@@ -103,7 +103,7 @@ namespace pdf_ocr.Controllers
         }
 
         /// <summary>
-        /// DEMO: Processar sem autentica��o (limitado)
+        /// DEMO: Processar sem autenticao (limitado)
         /// </summary>
         [HttpPost("demo")]
         [AllowAnonymous]
@@ -185,12 +185,12 @@ namespace pdf_ocr.Controllers
         }
 
         /// <summary>
-        /// Processa um PDF de forma s�ncrona e retorna o arquivo processado imediatamente
+        /// Processa um PDF de forma sncrona e retorna o arquivo processado imediatamente
         /// </summary>
         /// <param name="file">Arquivo PDF para processar</param>
         /// <returns>PDF processado com OCR</returns>
         /// <response code="200">PDF processado com sucesso</response>
-        /// <response code="400">Arquivo inv�lido ou muito grande</response>
+        /// <response code="400">Arquivo invlido ou muito grande</response>
         /// <response code="500">Erro no processamento</response>
         [HttpPost("process-sync")]
         [Consumes("multipart/form-data")]
@@ -202,17 +202,17 @@ namespace pdf_ocr.Controllers
         public async Task<IActionResult> ProcessSync(
         [FromForm] PdfUploadRequest request)
         {
-            _logger.LogInformation("Recebida requisi��o s�ncrona de processamento");
+            _logger.LogInformation("Recebida requisio sncrona de processamento");
             var file = request.File;
-            // Verificar cr�ditos ANTES de processar
+            // Verificar crditos ANTES de processar
             var creditCheck = await CreditCheckAttribute.CheckCredits(
                 HttpContext, _userService, _logger);
 
             if (creditCheck != null)
-                return creditCheck; // Sem cr�ditos
+                return creditCheck; // Sem crditos
 
 
-            // Valida��es
+            // Validaes
             var validationError = ValidateFile(request.File);
             if (validationError != null)
             {
@@ -221,7 +221,7 @@ namespace pdf_ocr.Controllers
 
             try
             {
-                // Criar diret�rio tempor�rio
+                // Criar diretrio temporrio
                 string jobDir = Path.Combine(Path.GetTempPath(), "ocr_sync", Guid.NewGuid().ToString("N"));
                 Directory.CreateDirectory(jobDir);
 
@@ -237,15 +237,15 @@ namespace pdf_ocr.Controllers
                 }
 
                 // Processar imediatamente
-                _logger.LogInformation("Iniciando processamento s�ncrono");
+                _logger.LogInformation("Iniciando processamento sncrono");
                 var result = await Task.Run(() => OcrPipelineService.Run(jobDir));
 
                 if (!result.Success)
                 {
                     _logger.LogError("Falha no processamento: {Error}", result.Error);
-                    // Devolver cr�dito em caso de erro
+                    // Devolver crdito em caso de erro
                     await _userService.AddCreditsAsync(GetUserId(), 1);
-                    // Limpar diret�rio tempor�rio
+                    // Limpar diretrio temporrio
                     CleanupDirectory(jobDir);
 
                     var msg = ApiMessages.OcrProcessingFailed(HttpContext, result.Error);
@@ -261,10 +261,10 @@ namespace pdf_ocr.Controllers
                 // Ler arquivo processado
                 var processedBytes = await System.IO.File.ReadAllBytesAsync(result.OutputPdf);
 
-                _logger.LogInformation("Processamento conclu�do com sucesso. Arquivo: {Size} bytes",
+                _logger.LogInformation("Processamento concludo com sucesso. Arquivo: {Size} bytes",
                     processedBytes.Length);
 
-                // Limpar diret�rio tempor�rio
+                // Limpar diretrio temporrio
                 CleanupDirectory(jobDir);
 
                 // Retornar PDF processado
@@ -276,7 +276,7 @@ namespace pdf_ocr.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Erro cr�tico no processamento s�ncrono");
+                _logger.LogError(ex, "Erro crtico no processamento sncrono");
                 var msg = ApiMessages.InternalServerError(HttpContext);
                 return StatusCode(500, new ErrorResponse
                 {
@@ -288,12 +288,12 @@ namespace pdf_ocr.Controllers
 
 
         /// <summary>
-        /// Processa um PDF de forma sncrona e retorna o TEXTO extra eddo ap f3s aplicar OCR
+        /// Processa um PDF de forma sncrona e retorna o TEXTO extra eddo ap f3s aplicar OCR
         /// </summary>
         /// <param name="request">Request multipart/form-data contendo o PDF</param>
-        /// <returns>Texto extra eddo do PDF OCR (JSON)</returns>
+        /// <returns>Texto extra eddo do PDF OCR (JSON)</returns>
         /// <response code="200">OCR executado e texto retornado com sucesso</response>
-        /// <response code="400">Arquivo inv e1lido ou muito grande</response>
+        /// <response code="400">Arquivo inv e1lido ou muito grande</response>
         /// <response code="500">Erro no processamento</response>
         [HttpPost("process-text")]
         [Consumes("multipart/form-data")]
@@ -305,16 +305,16 @@ namespace pdf_ocr.Controllers
         public async Task<IActionResult> ProcessText(
             [FromForm] PdfUploadRequest request)
         {
-            _logger.LogInformation("Recebida requisi e7 e3o s edncrona de OCR para texto");
+            _logger.LogInformation("Recebida requisi e7 e3o s edncrona de OCR para texto");
 
-            // Verificar cr e9ditos ANTES de processar
+            // Verificar cr e9ditos ANTES de processar
             var creditCheck = await CreditCheckAttribute.CheckCredits(
                 HttpContext, _userService, _logger);
 
             if (creditCheck != null)
                 return creditCheck;
 
-            // Valida e7 f5es
+            // Valida e7 f5es
             var validationError = ValidateFile(request.File);
             if (validationError != null)
             {
@@ -326,7 +326,7 @@ namespace pdf_ocr.Controllers
 
             try
             {
-                // Criar diret f3rio tempor e1rio
+                // Criar diret f3rio tempor e1rio
                 jobDir = Path.Combine(Path.GetTempPath(), "ocr_text", Guid.NewGuid().ToString("N"));
                 Directory.CreateDirectory(jobDir);
 
@@ -341,7 +341,7 @@ namespace pdf_ocr.Controllers
                 }
 
                 // Processar imediatamente
-                _logger.LogInformation("Iniciando pipeline OCR para extra e7 e3o de texto");
+                _logger.LogInformation("Iniciando pipeline OCR para extra e7 e3o de texto");
                 var result = await Task.Run(() => OcrPipelineService.Run(jobDir));
 
                 if (!result.Success)
@@ -373,14 +373,14 @@ namespace pdf_ocr.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Erro cr edtico no processamento de OCR para texto");
+                _logger.LogError(ex, "Erro cr edtico no processamento de OCR para texto");
                 try
                 {
                     await _userService.AddCreditsAsync(userId, 1);
                 }
                 catch
                 {
-                    // Ignorar falhas de rollback de cr e9dito
+                    // Ignorar falhas de rollback de cr e9dito
                 }
                 if (!string.IsNullOrEmpty(jobDir))
                 {
@@ -398,7 +398,7 @@ namespace pdf_ocr.Controllers
 
 
         /// <summary>
-        /// DEMO: Processa um PDF e retorna o TEXTO OCR sem autentica e7 e3o (limitado)
+        /// DEMO: Processa um PDF e retorna o TEXTO OCR sem autentica e7 e3o (limitado)
         /// </summary>
         [HttpPost("process-text-demo")]
         [AllowAnonymous]
@@ -444,7 +444,7 @@ namespace pdf_ocr.Controllers
                 });
             }
 
-            // Rate-limit por IP: at e9 3 chamadas por per edodo (24h)
+            // Rate-limit por IP: at e9 3 chamadas por per edodo (24h)
             string ip = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
             try
             {
@@ -473,12 +473,12 @@ namespace pdf_ocr.Controllers
                 }
                 else
                 {
-                    _logger.LogDebug("Redis IConnectionMultiplexer n e3o registrado  e2 c0 demo_text rate-limit n e3o ser e1 aplicado");
+                    _logger.LogDebug("Redis IConnectionMultiplexer n e3o registrado  e2 c0 demo_text rate-limit n e3o ser e1 aplicado");
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Falha ao verificar contador demo_text no Redis  e2 c0 permitindo demo sem contagem");
+                _logger.LogWarning(ex, "Falha ao verificar contador demo_text no Redis  e2 c0 permitindo demo sem contagem");
             }
 
             string? jobDir = null;
@@ -519,7 +519,7 @@ namespace pdf_ocr.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Erro cr edtico no processamento demo de OCR para texto");
+                _logger.LogError(ex, "Erro cr edtico no processamento demo de OCR para texto");
                 if (!string.IsNullOrEmpty(jobDir))
                 {
                     CleanupDirectory(jobDir);
@@ -602,7 +602,7 @@ namespace pdf_ocr.Controllers
 
             if (!file.FileName.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
             {
-                _logger.LogWarning("Tipo de arquivo inv�lido: {FileName}", file.FileName);
+                _logger.LogWarning("Tipo de arquivo invlido: {FileName}", file.FileName);
                 var msg = ApiMessages.InvalidFileType(HttpContext);
                 return BadRequest(new ErrorResponse
                 {
@@ -613,9 +613,8 @@ namespace pdf_ocr.Controllers
 
             return null;
         }
-
         /// <summary>
-        /// Limpa diret�rio tempor�rio de forma segura
+        /// Limpa diretrio temporrio de forma segura
         /// </summary>
         private void CleanupDirectory(string directory)
         {
@@ -624,12 +623,12 @@ namespace pdf_ocr.Controllers
                 if (Directory.Exists(directory))
                 {
                     Directory.Delete(directory, true);
-                    _logger.LogDebug("Diret�rio tempor�rio removido: {Directory}", directory);
+                    _logger.LogDebug("Diretrio temporrio removido: {Directory}", directory);
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Falha ao limpar diret�rio: {Directory}", directory);
+                _logger.LogWarning(ex, "Falha ao limpar diretrio: {Directory}", directory);
             }
         }
     }
@@ -695,13 +694,13 @@ namespace pdf_ocr.Controllers
                 }
             }
 
-            // Custo: 1 cr�dito por PDF
+            // Custo: 1 crdito por PDF
             const int COST = 1;
 
             var credits = await userService.GetCreditsAsync(userId);
             if (credits < COST)
             {
-                logger.LogWarning("Cr�ditos insuficientes: {UserId} tem {Credits}", userId, credits);
+                logger.LogWarning("Crditos insuficientes: {UserId} tem {Credits}", userId, credits);
                 var msg = ApiMessages.InsufficientCredits(context, COST, credits);
                 return new ObjectResult(new ErrorResponse
                 {
@@ -712,7 +711,7 @@ namespace pdf_ocr.Controllers
                 { StatusCode = 402 }; // Payment Required
             }
 
-            // Deduzir cr�ditos
+            // Deduzir crditos
             var success = await userService.DeductCreditsAsync(userId, COST);
             if (!success)
             {
