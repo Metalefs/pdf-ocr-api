@@ -145,7 +145,7 @@ namespace pdf_ocr.Controllers
                         await db.KeyExpireAsync(key, TimeSpan.FromHours(24)).ConfigureAwait(false);
                     }
 
-                    if (count > 3)
+                    if (count > 1)
                     {
                         _logger.LogWarning("IP {Ip} excedeu limite demo: {Count}", ip, count);
                         var msg = ApiMessages.DemoLimitExceeded(HttpContext);
@@ -459,7 +459,7 @@ namespace pdf_ocr.Controllers
                         await db.KeyExpireAsync(key, TimeSpan.FromHours(24)).ConfigureAwait(false);
                     }
 
-                    if (count > 3)
+                    if (count > 1)
                     {
                         _logger.LogWarning("IP {Ip} excedeu limite demo_text: {Count}", ip, count);
                         var msg = ApiMessages.DemoLimitExceeded(HttpContext);
