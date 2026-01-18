@@ -150,7 +150,7 @@ git push -u origin main
    - Deploy!
 
 3. **URL final:**
-   - `https://ocr-frontend.vercel.app`
+   - `https://textlayerocr.up.railway.app`
 
 ### Hora 4: Testes Finais
 
