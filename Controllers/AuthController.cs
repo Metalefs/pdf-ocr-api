@@ -83,7 +83,8 @@ namespace pdf_ocr.Controllers
                         avatar = user.Avatar,
                         credits = user.Credits,
                         plan = user.Plan,
-                        createdAt = user.CreatedAt
+                        createdAt = user.CreatedAt,
+                        subscriptionStatus = user.SubscriptionStatus
                     }
                 });
             }
@@ -177,7 +178,8 @@ namespace pdf_ocr.Controllers
                     credits = user.Credits,
                     plan = user.Plan,
                     createdAt = user.CreatedAt,
-                    subscriptionEndsAt = user.SubscriptionEndsAt
+                    subscriptionEndsAt = user.SubscriptionEndsAt,
+                    subscriptionStatus = user.SubscriptionStatus
                 });
             }
             catch (Exception ex)

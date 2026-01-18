@@ -11,6 +11,13 @@ namespace pdf_ocr.Services
         Task<bool> DeductCreditsAsync(string userId, int amount);
         Task<bool> AddCreditsAsync(string userId, int amount);
         Task<bool> UpdatePlanAsync(string userId, string plan, DateTime? expiresAt);
+        Task<bool> UpdateSubscriptionAsync(
+            string userId,
+            string plan,
+            string? subscriptionId,
+            string? status,
+            DateTime? endsAt = null);
+        Task<bool> UpdateSubscriptionStatusAsync(string userId, string? status);
         Task<UsageStats?> GetUsageStatsAsync(string userId);
         Task<bool> RecordUsageAsync(string userId, int creditsUsed, string? fileName, long? fileSize);
         Task<Models.UserProfile?> UpdateUserAsync(string userId, string name, string? avatar);
@@ -142,6 +149,16 @@ namespace pdf_ocr.Services
         }
 
         public Task UpdateUserPlanAsync(string userId, string plan, int credits, string? subscriptionId = null)
+        {
+            throw new NotImplementedException();
+        }
+
+        public Task<bool> UpdateSubscriptionAsync(string userId, string plan, string? subscriptionId, string? status, DateTime? endsAt = null)
+        {
+            throw new NotImplementedException();
+        }
+
+        public Task<bool> UpdateSubscriptionStatusAsync(string userId, string? status)
         {
             throw new NotImplementedException();
         }

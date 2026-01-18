@@ -59,6 +59,10 @@ namespace pdf_ocr.Services
         [JsonPropertyName("stripe_subscription_id")]
         public string? StripeSubscriptionId { get; set; }
 
+        [Column("subscription_status")]
+        [JsonPropertyName("subscription_status")]
+        public string? SubscriptionStatus { get; set; }
+
         [Column("updated_at")]
         [JsonPropertyName("updated_at")]
         public DateTime? UpdatedAt { get; set; }
@@ -202,6 +206,87 @@ namespace pdf_ocr.Services
             {
                 _logger.LogError(ex, "Erro ao atualizar usuário: {UserId}", userId);
                 throw;
+            }
+        }
+
+        /// <summary>
+        /// Atualiza o status da assinatura do usuário
+        /// </summary>
+        public async Task<bool> UpdateSubscriptionStatusAsync(string userId, string? status)
+        {
+            try
+            {
+                var user = await _supabase
+                    .From<UserRecord>()
+                    .Where(x => x.Id == userId)
+                    .Single();
+
+                if (user == null)
+                {
+                    _logger.LogWarning("Usuário não encontrado: {UserId}", userId);
+                    return false;
+                }
+
+                user.SubscriptionStatus = status;
+                user.UpdatedAt = DateTime.UtcNow;
+
+                await _supabase
+                    .From<UserRecord>()
+                    .Update(user);
+
+                _logger.LogInformation("Status atualizado: {UserId} → {Status}", userId, status ?? "null");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erro ao atualizar status: {UserId}", userId);
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Atualiza plano, assinatura e status simultaneamente
+        /// </summary>
+        public async Task<bool> UpdateSubscriptionAsync(
+            string userId,
+            string plan,
+            string? subscriptionId,
+            string? status,
+            DateTime? endsAt = null)
+        {
+            try
+            {
+                var user = await _supabase
+                    .From<UserRecord>()
+                    .Where(x => x.Id == userId)
+                    .Single();
+
+                if (user == null)
+                {
+                    _logger.LogWarning("Usuário não encontrado: {UserId}", userId);
+                    return false;
+                }
+
+                user.Plan = plan;
+                user.StripeSubscriptionId = subscriptionId;
+                user.SubscriptionStatus = status;
+                user.SubscriptionEndsAt = endsAt;
+                user.UpdatedAt = DateTime.UtcNow;
+
+                await _supabase
+                    .From<UserRecord>()
+                    .Update(user);
+
+                _logger.LogInformation(
+                    "Assinatura atualizada: {UserId} → Plan: {Plan}, Status: {Status}",
+                    userId, plan, status ?? "null");
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erro ao atualizar assinatura: {UserId}", userId);
+                return false;
             }
         }
 
@@ -437,6 +522,7 @@ namespace pdf_ocr.Services
                 SubscriptionEndsAt = record.SubscriptionEndsAt,
                 StripeSubscriptionId = record.StripeSubscriptionId,
                 StripeCustomerId = record.StripeCustomerId,
+                SubscriptionStatus = record.SubscriptionStatus
             };
         }
     }

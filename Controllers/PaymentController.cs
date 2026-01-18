@@ -251,6 +251,8 @@ public class PaymentController : ControllerBase
                 {
                     CancelAtPeriodEnd = true
                 });
+                // Atualiza status para canceled mas mantém plano até o fim do período
+                await _userService.UpdateSubscriptionStatusAsync(userId, "canceled");
 
                 // Guardar data de fim do ciclo (para UI: "Renews" / "Ends")
                 await _userService.UpdatePlanAsync(userId, user.Plan, GetSubscriptionPeriodEnd(subscription));
@@ -391,6 +393,12 @@ public class PaymentController : ControllerBase
             {
                 var subService = new SubscriptionService();
                 var subscription = await subService.GetAsync(subscriptionId);
+                await _userService.UpdateSubscriptionAsync(
+                   userId,
+                   plan.Name.ToLower(),
+                   subscriptionId,
+                   "active",
+                   GetSubscriptionPeriodEnd(subscription));
                 await _userService.UpdatePlanAsync(userId, plan.Name.ToLower(), GetSubscriptionPeriodEnd(subscription));
             }
             catch (Exception ex)
@@ -416,6 +424,23 @@ public class PaymentController : ControllerBase
             {
                 var user = await _userService.GetUserAsync(userId);
                 var plan = user?.Plan ?? "free";
+                string? status = subscription.Status switch
+                {
+                    "active" => "active",
+                    "canceled" => "canceled",
+                    "past_due" => "past_due",
+                    "unpaid" => "unpaid",
+                    "trialing" => "trialing",
+                    _ => null
+                };
+
+                await _userService.UpdateSubscriptionAsync(
+                    userId,
+                    plan,
+                    subscription.Id,
+                    status,
+                    GetSubscriptionPeriodEnd(subscription));
+
                 await _userService.UpdatePlanAsync(userId, plan, GetSubscriptionPeriodEnd(subscription));
                 _logger.LogInformation("Assinatura atualizada: {SubId} (User: {UserId})", subscription.Id, userId);
                 return;
@@ -440,6 +465,12 @@ public class PaymentController : ControllerBase
             try
             {
                 var freeCredits = await GetFreeCreditsAsync();
+                await _userService.UpdateSubscriptionAsync(
+                userId,
+                "free",
+                null,
+                "canceled",
+                null);
                 await _userService.UpdateUserPlanAsync(userId, "free", freeCredits, null);
                 await _userService.UpdatePlanAsync(userId, "free", null);
                 _logger.LogInformation("Assinatura cancelada: {SubId} (User: {UserId})", subscription.Id, userId);

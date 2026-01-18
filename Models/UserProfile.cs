@@ -16,6 +16,7 @@ namespace pdf_ocr.Models
         public DateTime CreatedAt { get; set; }
         public DateTime? UpdatedAt { get; set; }
         public DateTime? SubscriptionEndsAt { get; set; }
+        public string? SubscriptionStatus { get; set; }
     }
     public class UserMetadata
     {
