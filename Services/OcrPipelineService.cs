@@ -180,9 +180,19 @@ namespace pdf_ocr
             }
         }
 
+        // Método auxiliar para criar PdfReader com propriedades de leitura não-ética
+        private static PdfReader CreateUnethicalReader(string pdfPath)
+        {
+            var pdfReader = new PdfReader(pdfPath);
+            pdfReader.SetUnethicalReading(true);
+            return pdfReader;
+        }
+
+
         private static void ProcessPdfWithVectorText(string inputPdf, string outputPdf)
         {
-            using var pdfDoc = new iText.Kernel.Pdf.PdfDocument(new PdfReader(inputPdf), new PdfWriter(outputPdf));
+            using var pdfDoc = new iText.Kernel.Pdf.PdfDocument(CreateUnethicalReader(inputPdf), new PdfWriter(outputPdf));
+
             for (int i = 1; i <= pdfDoc.GetNumberOfPages(); i++)
                 RenderPageAsNonSelectableContent(pdfDoc.GetPage(i));
         }
@@ -204,7 +214,7 @@ namespace pdf_ocr
 
         private static void RemoveFormVisualsOnly(string inputPdf, string outputPdf)
         {
-            using var src = new iText.Kernel.Pdf.PdfDocument(new PdfReader(inputPdf));
+            using var src = new iText.Kernel.Pdf.PdfDocument(CreateUnethicalReader(inputPdf));
             using var dest = new iText.Kernel.Pdf.PdfDocument(new PdfWriter(outputPdf));
             for (int i = 1; i <= src.GetNumberOfPages(); i++)
             {
@@ -499,7 +509,7 @@ namespace pdf_ocr
             Action<pdf_ocr.Models.JobProgressInfo>? onProgress)
         {
             string ocrPagesDir = Path.Combine(jobDir, "ocr_debug_temp");
-            using var srcOriginal = new iText.Kernel.Pdf.PdfDocument(new PdfReader(originalPdf));
+            using var srcOriginal = new iText.Kernel.Pdf.PdfDocument(CreateUnethicalReader(originalPdf));
 
             var writerProps = new WriterProperties().SetFullCompressionMode(true).SetCompressionLevel(9);
             using var writer = new PdfWriter(outputPdf, writerProps);
@@ -543,7 +553,7 @@ namespace pdf_ocr
                 string ocrPagePath = Path.Combine(ocrPagesDir, $"ocr_page_{i:000}.pdf");
                 if (File.Exists(ocrPagePath))
                 {
-                    using var ocrSubDoc = new iText.Kernel.Pdf.PdfDocument(new PdfReader(ocrPagePath));
+                    using var ocrSubDoc = new iText.Kernel.Pdf.PdfDocument(CreateUnethicalReader(ocrPagePath));
                     var ocrPage = ocrSubDoc.GetPage(1);
                     var ocrXObject = ocrPage.CopyAsFormXObject(dest);
                     canvas.AddXObjectFittedIntoRectangle(ocrXObject, rect);
