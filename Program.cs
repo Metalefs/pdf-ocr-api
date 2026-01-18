@@ -65,6 +65,24 @@ builder.Services.AddSwaggerGen(options =>
         Version = "v1.0",
         Description = "API "
     });
+
+    // Hide admin-only endpoints from the public Swagger document.
+    // Any action/controller decorated with [Authorize(Roles = "admin")] will be omitted.
+    options.DocInclusionPredicate((_, apiDesc) =>
+    {
+        if (!apiDesc.TryGetMethodInfo(out var methodInfo))
+            return true;
+
+        if (HasAdminRoleRequirement(methodInfo))
+            return false;
+
+        var declaringType = methodInfo.DeclaringType;
+        if (declaringType != null && HasAdminRoleRequirement(declaringType))
+            return false;
+
+        return true;
+    });
+
     // Adicionar autenticaÃ§Ã£o JWT no Swagger
     options.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
@@ -87,6 +105,27 @@ builder.Services.AddSwaggerGen(options =>
     // Configurar suporte para upload de arquivos
     options.OperationFilter<FileUploadOperationFilter>();
 });
+
+static bool HasAdminRoleRequirement(MemberInfo member)
+{
+    var authorizeAttributes = member
+        .GetCustomAttributes(inherit: true)
+        .OfType<AuthorizeAttribute>();
+
+    foreach (var authorize in authorizeAttributes)
+    {
+        if (string.IsNullOrWhiteSpace(authorize.Roles))
+            continue;
+
+        var roles = authorize.Roles
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        if (roles.Any(r => string.Equals(r, "admin", StringComparison.OrdinalIgnoreCase)))
+            return true;
+    }
+
+    return false;
+}
 
 // Health Checks
 builder.Services.AddHealthChecks();

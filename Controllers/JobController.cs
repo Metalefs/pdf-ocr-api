@@ -301,6 +301,7 @@ namespace pdf_ocr.Controllers
         /// </summary>
         [HttpPost("{jobId}/cancel")]
         [Authorize]
+        [Authorize(Roles = "admin")]
         [ProducesResponseType(StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status404NotFound)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -389,6 +390,7 @@ namespace pdf_ocr.Controllers
         /// <returns>Número de jobs removidos</returns>
         /// <response code="200">Limpeza concluída</response>
         [HttpPost("cleanup")]
+        [Authorize(Roles = "admin")]
         [ProducesResponseType(typeof(CleanupResponse), StatusCodes.Status200OK)]
         public async Task<IActionResult> Cleanup([FromQuery] int hoursOld = 24)
         {
@@ -414,6 +416,7 @@ namespace pdf_ocr.Controllers
         /// <returns>Estatísticas de processamento</returns>
         /// <response code="200">Estatísticas obtidas</response>
         [HttpGet("stats")]
+        [Authorize(Roles = "admin")]
         [ProducesResponseType(typeof(JobStatsResponse), StatusCodes.Status200OK)]
         public async Task<IActionResult> GetStats()
         {
