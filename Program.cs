@@ -36,7 +36,7 @@ builder.Services.AddCors(options =>
         {
             // Production - allow Render frontend URL
             policy
-                .WithOrigins("https://textlayerocr.up.railway.app", "https://textlayerocr.com")
+                .WithOrigins("https://textlayerocr.com")
                 .AllowAnyMethod()
                 .AllowAnyHeader()
                 .AllowCredentials();

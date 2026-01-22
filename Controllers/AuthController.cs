@@ -220,7 +220,7 @@ namespace pdf_ocr.Controllers
             else
             {
                 // Production redirect to Render
-                return "https://pdf-ocr-frontend.onrender.com/auth/callback";
+                return "https://textlayerocr.com/auth/callback";
             }
         }
     }

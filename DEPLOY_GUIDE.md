@@ -150,7 +150,7 @@ git push -u origin main
    - Deploy!
 
 3. **URL final:**
-   - `https://textlayerocr.up.railway.app`
+   - `https://textlayerocr.com`
 
 ### Hora 4: Testes Finais
 
