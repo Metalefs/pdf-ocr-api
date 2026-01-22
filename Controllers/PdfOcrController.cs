@@ -159,12 +159,12 @@ namespace pdf_ocr.Controllers
                 }
                 else
                 {
-                    _logger.LogDebug("Redis IConnectionMultiplexer não registrado — demo rate-limit não será aplicado");
+                    _logger.LogDebug("Redis IConnectionMultiplexer não registrado | demo rate-limit não será aplicado");
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Falha ao verificar contador demo no Redis — permitindo demo sem contagem");
+                _logger.LogWarning(ex, "Falha ao verificar contador demo no Redis | permitindo demo sem contagem");
             }
 
             // Processar normalmente

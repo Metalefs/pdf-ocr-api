@@ -561,13 +561,13 @@ namespace pdf_ocr
             }
             if (!PdfSignatureDetector.HasDigitalSignatures(originalPdf))
             {
-                addLog("[MERGE] Nenhuma assinatura digital detectada no original — não anexando o PDF original.");
+                addLog("[MERGE] Nenhuma assinatura digital detectada no original | não anexando o PDF original.");
                 return;
             }
 
             RemoveAllDigitalSignatures(dest, addLog);
 
-            addLog("[MERGE] Assinaturas digitais detectadas — anexando o PDF original ao resultado...");
+            addLog("[MERGE] Assinaturas digitais detectadas | anexando o PDF original ao resultado...");
 
             try
             {
