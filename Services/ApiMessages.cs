@@ -242,6 +242,13 @@ public static class ApiMessages
             : ("Key name is required", "Provide a name for the API key");
     }
 
+    public static (string Error, string Details) ApiAccessNotAvailable(HttpContext ctx)
+    {
+        return IsPt(ctx)
+            ? ("Acesso à API não disponível", "Upgrade para um plano pago para acessar a API")
+            : ("API access not available", "Upgrade to a paid plan to access the API");
+    }
+
     public static (string Error, string Details) ApiKeysCreateFailed(HttpContext ctx)
     {
         return IsPt(ctx)

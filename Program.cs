@@ -36,7 +36,7 @@ builder.Services.AddCors(options =>
         {
             // Production - allow Render frontend URL
             policy
-                .WithOrigins("https://textlayerocr.com")
+                .WithOrigins("https://textlayerocr.com", "https://textlayerocr.up.railway.app", "https://pdf-ocr-frontend.netlify.app")
                 .AllowAnyMethod()
                 .AllowAnyHeader()
                 .AllowCredentials();

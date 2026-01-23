@@ -15,11 +15,13 @@ namespace pdf_ocr.Controllers
     public class ApiKeysController : ControllerBase
     {
         private readonly IApiKeyService _apiKeyService;
+        private readonly IUserService _userService;
         private readonly ILogger<ApiKeysController> _logger;
 
-        public ApiKeysController(IApiKeyService apiKeyService, ILogger<ApiKeysController> logger)
+        public ApiKeysController(IApiKeyService apiKeyService, IUserService userService, ILogger<ApiKeysController> logger)
         {
             _apiKeyService = apiKeyService;
+            _userService = userService;
             _logger = logger;
         }
 
@@ -40,6 +42,18 @@ namespace pdf_ocr.Controllers
                 if (string.IsNullOrEmpty(userId))
                 {
                     return Unauthorized(UserNotAuthenticatedResponse());
+                }
+
+                // Check if user's plan allows API access
+                var user = await _userService.GetUserAsync(userId);
+                if (user == null || user.Plan.ToLower() == "free")
+                {
+                    var msg = ApiMessages.ApiAccessNotAvailable(HttpContext);
+                    return BadRequest(new ErrorResponse
+                    {
+                        Error = msg.Error,
+                        Details = msg.Details
+                    });
                 }
 
                 if (string.IsNullOrWhiteSpace(request.Name))
@@ -86,6 +100,19 @@ namespace pdf_ocr.Controllers
                 {
                     return Unauthorized(UserNotAuthenticatedResponse());
                 }
+
+                // Check if user's plan allows API access
+                var user = await _userService.GetUserAsync(userId);
+                if (user == null || user.Plan == "free")
+                {
+                    var msg = ApiMessages.ApiAccessNotAvailable(HttpContext);
+                    return BadRequest(new ErrorResponse
+                    {
+                        Error = msg.Error,
+                        Details = msg.Details
+                    });
+                }
+
                 var keys = await _apiKeyService.GetUserKeysAsync(userId);
 
                 return Ok(keys);
@@ -117,6 +144,19 @@ namespace pdf_ocr.Controllers
                 {
                     return Unauthorized(UserNotAuthenticatedResponse());
                 }
+
+                // Check if user's plan allows API access
+                var user = await _userService.GetUserAsync(userId);
+                if (user == null || user.Plan == "free")
+                {
+                    var msg = ApiMessages.ApiAccessNotAvailable(HttpContext);
+                    return BadRequest(new ErrorResponse
+                    {
+                        Error = msg.Error,
+                        Details = msg.Details
+                    });
+                }
+
                 var success = await _apiKeyService.RevokeKeyAsync(userId, keyId);
 
                 if (!success)
