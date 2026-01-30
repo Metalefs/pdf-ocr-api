@@ -12,6 +12,7 @@ namespace pdf_ocr.Controllers
     [ApiController]
     [Route("api/[controller]")]
     [Authorize] // Requer autenticação JWT (usuário web)
+    [ApiExplorerSettings(IgnoreApi = true)] // Oculta todos os endpoints deste controller no Swagger
     public class ApiKeysController : ControllerBase
     {
         private readonly IApiKeyService _apiKeyService;

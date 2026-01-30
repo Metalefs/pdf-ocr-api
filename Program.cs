@@ -331,18 +331,19 @@ app.MapGet("/", () => new HealthResponse
     Timestamp = DateTime.UtcNow,
     Features = new List<string>
     {
-        "OAuth Authentication (Supabase)",
-        "Credit System",
-        "Stripe Payments",
-        "Rate Limiting"
+        "Authentication",
+        "Payments",
+        "Limiter"
     }
 })
 .WithName("HealthCheck")
 .WithTags("Health")
-.Produces<HealthResponse>(StatusCodes.Status200OK);
+.Produces<HealthResponse>(StatusCodes.Status200OK)
+.ExcludeFromDescription(); // Oculta do Swagger
 
 // Health Check detalhado
-app.MapHealthChecks("/health");
+app.MapHealthChecks("/health")
+    .ExcludeFromDescription(); // Oculta do Swagger
 
 // ============================================
 // LIMPEZA AUTOMï¿½TICA (Background)
@@ -367,9 +368,6 @@ app.MapGet("/api/info", () => new
         processAsync = "POST /api/pdf/process",
         jobStatus = "GET /api/jobs/{jobId}/status",
         jobDownload = "GET /api/jobs/{jobId}/download",
-        jobsList = "GET /api/jobs",
-        jobStats = "GET /api/jobs/stats",
-        cleanup = "POST /api/jobs/cleanup"
     },
     limits = new
     {

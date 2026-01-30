@@ -13,6 +13,7 @@ namespace pdf_ocr.Controllers
 {
     [ApiController]
     [Route("api/[controller]")]
+    [ApiExplorerSettings(IgnoreApi = true)] // Oculta todos os endpoints de autenticação no Swagger
     public class AuthController : ControllerBase
     {
         private readonly ILogger<AuthController> _logger;

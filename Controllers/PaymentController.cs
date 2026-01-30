@@ -12,6 +12,7 @@ namespace pdf_ocr.Controllers;
 [ApiController]
 [Route("api/[controller]")]
 [Produces("application/json")]
+[ApiExplorerSettings(IgnoreApi = true)] // Oculta endpoints de pagamento no Swagger
 public class PaymentController : ControllerBase
 {
     private readonly ILogger<PaymentController> _logger;

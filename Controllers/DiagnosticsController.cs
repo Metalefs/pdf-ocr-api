@@ -5,6 +5,7 @@ using System.Diagnostics;
 
 namespace pdf_ocr.Controllers
 {
+    [ApiExplorerSettings(IgnoreApi = true)] // Oculta endpoints de diagnóstico no Swagger
     public class DiagnosticsController : Controller
     {
         [HttpGet("ocr-status")]
@@ -33,7 +34,7 @@ namespace pdf_ocr.Controllers
                 {
                     Environment = Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT"),
                     GlobalizationInvariant = Environment.GetEnvironmentVariable("DOTNET_SYSTEM_GLOBALIZATION_INVARIANT"),
-                    TesseractInstalled = true,
+                    OCR = true,
                     AvailableLanguages = langs,
                     SupportFullGlobal = langs.Contains("por") && langs.Contains("ara") && langs.Contains("chi_sim")
                 };

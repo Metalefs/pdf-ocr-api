@@ -150,53 +150,6 @@ namespace pdf_ocr.Controllers
         }
 
         /// <summary>
-        /// Lista todos os jobs (paginado)
-        /// </summary>
-        /// <param name="page">Número da página (padrão: 1)</param>
-        /// <param name="pageSize">Itens por página (padrão: 20, máximo: 100)</param>
-        /// <param name="status">Filtrar por status (opcional)</param>
-        /// <returns>Lista paginada de jobs</returns>
-        /// <response code="200">Lista obtida com sucesso</response>
-        [HttpGet]
-        [ProducesResponseType(typeof(JobListResponse), StatusCodes.Status200OK)]
-        public async Task<IActionResult> ListJobs(
-            [FromQuery] int page = 1,
-            [FromQuery] int pageSize = 20,
-            [FromQuery] string? status = null)
-        {
-            _logger.LogInformation("Listando jobs - Página: {Page}, Tamanho: {PageSize}, Status: {Status}",
-                page, pageSize, status);
-
-            // Validar parâmetros
-            if (page < 1) page = 1;
-            if (pageSize < 1) pageSize = 20;
-            if (pageSize > 100) pageSize = 100;
-
-            var jobs = await _jobService.ListJobsAsync(page, pageSize, status);
-            var totalJobs = await _jobService.GetTotalJobsAsync(status);
-            var totalPages = (int)Math.Ceiling(totalJobs / (double)pageSize);
-
-            var response = new JobListResponse
-            {
-                Jobs = jobs.Select(j => new JobSummary
-                {
-                    JobId = j.Id,
-                    FileName = j.FileName,
-                    Status = j.Status,
-                    CreatedAt = j.CreatedAt,
-                    CompletedAt = j.CompletedAt,
-                    FileSize = j.FileSize
-                }).ToList(),
-                Page = page,
-                PageSize = pageSize,
-                TotalJobs = totalJobs,
-                TotalPages = totalPages
-            };
-
-            return Ok(response);
-        }
-
-        /// <summary>
         /// Busca jobs do usuário autenticado
         /// </summary>
         [HttpGet("my-jobs")]
@@ -251,6 +204,7 @@ namespace pdf_ocr.Controllers
         [ProducesResponseType(StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status404NotFound)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ApiExplorerSettings(IgnoreApi = true)] 
         public async Task<ActionResult> ResumeJob(string jobId)
         {
             try
@@ -297,23 +251,42 @@ namespace pdf_ocr.Controllers
         }
 
         /// <summary>
-        /// Cancela um job em execução
+        /// Cancela um job em execução (apenas o criador do job pode cancelá-lo)
         /// </summary>
         [HttpPost("{jobId}/cancel")]
         [Authorize]
-        [Authorize(Roles = "admin")]
         [ProducesResponseType(StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status404NotFound)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(StatusCodes.Status403Forbidden)]
         public async Task<ActionResult> CancelJob(string jobId)
         {
             try
             {
+                var userIdClaim = User.FindFirst("sub")?.Value;
+                if (string.IsNullOrEmpty(userIdClaim))
+                {
+                    var msg = ApiMessages.UserNotAuthenticated(HttpContext);
+                    return Unauthorized(new ErrorResponse { Error = msg.Error, Details = msg.Details });
+                }
+
                 var job = await _persistenceService.GetJobAsync(jobId);
                 if (job == null)
                 {
                     var msg = ApiMessages.JobNotFound(HttpContext, jobId);
                     return NotFound(new ErrorResponse { Error = msg.Error, Details = msg.Details });
+                }
+
+                // Verificar se o usuário é o criador do job
+                if (job.UserId != userIdClaim)
+                {
+                    _logger.LogWarning("Usuário {UserId} tentou cancelar job {JobId} de outro usuário {OwnerId}",
+                        userIdClaim, jobId, job.UserId);
+                    return StatusCode(403, new ErrorResponse 
+                    { 
+                        Error = "Acesso negado", 
+                        Details = "Você só pode cancelar seus próprios jobs" 
+                    });
                 }
 
                 // Só pode cancelar jobs pending ou processing
@@ -392,6 +365,7 @@ namespace pdf_ocr.Controllers
         [HttpPost("cleanup")]
         [Authorize(Roles = "admin")]
         [ProducesResponseType(typeof(CleanupResponse), StatusCodes.Status200OK)]
+        [ApiExplorerSettings(IgnoreApi = true)] // Oculta do Swagger
         public async Task<IActionResult> Cleanup([FromQuery] int hoursOld = 24)
         {
             _logger.LogInformation("Iniciando limpeza de jobs antigos (>{Hours}h)", hoursOld);
@@ -418,6 +392,7 @@ namespace pdf_ocr.Controllers
         [HttpGet("stats")]
         [Authorize(Roles = "admin")]
         [ProducesResponseType(typeof(JobStatsResponse), StatusCodes.Status200OK)]
+        [ApiExplorerSettings(IgnoreApi = true)] 
         public async Task<IActionResult> GetStats()
         {
             _logger.LogInformation("Consultando estatísticas de jobs");
